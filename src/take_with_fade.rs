@@ -1,7 +1,6 @@
 use std::time::Duration;
 
 use rodio::{Sample, Source};
-use tokio::time::error::Elapsed;
 
 /// Internal function that builds a `TakeDuration` object.
 pub fn take_with_fade<I>(input: I, duration: Duration, fade_duration: Duration) -> TakeWithFade<I>
@@ -46,8 +45,7 @@ impl DurationFilter {
                 } else {
                     remaining
                 };
-                    sample.amplify(remaining / divisor)
-
+                sample.amplify(remaining / divisor)
             }
         }
     }
