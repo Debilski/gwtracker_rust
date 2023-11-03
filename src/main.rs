@@ -29,8 +29,8 @@ use take_with_fade::TakeWithFade;
 
 const FADEOUTTIME: u64 = 0;
 
-type SourceOnce = LogSource<Decoder<BufReader<File>>>;
-type SourceInfinite = rodio::source::Repeat<LogSource<Decoder<BufReader<File>>>>;
+type SourceOnce = Decoder<BufReader<File>>;
+type SourceInfinite = rodio::source::Repeat<SourceOnce>;
 
 fn source(str: &str) -> SourceOnce {
     // We either check relative to the current folder and if nothing is found,
@@ -62,31 +62,40 @@ fn source(str: &str) -> SourceOnce {
         .convert_samples()
         .buffered();
     let max: Option<f32> = data.clone().max_by(|x: &f32, y: &f32| x.total_cmp(y));
-    let min: Option<f32> = data.clone().min_by(|x: &f32, y: &f32| x.total_cmp(y));
-    println!("Max: {:?}, Min: {:?}", max, min);
+    println!("Max amplitude: {:?}", max.unwrap());
 
     let file = File::open(path.clone()).unwrap();
     let data = Decoder::new(BufReader::new(file))
-        .unwrap()
-        .log_source(str.to_string());
+        .unwrap();
     data
 }
 
 // fn play_background {
 // 35 + 75 Hz in loop
+
+// 75 fast immer laufen lassen
+// 35 Hz gelegentlich zuschalten
 // Zufallsüberlagerung. Wie?
 
 // -> Letzte 3 Events in Massen
 
 // M1 über 3 Minuten schwingen lassen
 
+// Zu Beginn M1,2,3 sounds besser trennen
+
+// 1/3 Langeweile, 2/3 Spannung (z.B. 200)
+
 // auf neue Instrumemte warten (triangel 44-44.22, (+200) ~ als Entfernung) oder lautstaerke
 // nach 2 min f. 10x einspielen <2000Pc<4000Pc<
 // sounds für location 139-139.5
 
-// wenn ort nicht genau gemessen: 200Hz für maximales Chaos nach paar Sekunden (+ 201Hz für wenige Sekunden gleichzeitig)
+// 200Hz für maximales Chaos nach paar Sekunden (+ 201Hz für wenige Sekunden gleichzeitig)
+// Lautstärke = Entfernung
 
-// Wenn ort klar ist nur 44+44.22 Hz
+// Wenn Ort klar lokalisiert ist, 44+44.22 Hz stärker, wenn Ort unklar ist, weniger
+// Bild Unschärfe ansehen
+// Zyklisch mit Überlappungen variieren
+// Hauptsächlich spielen, wenn das relative M1,2,3 auch spielt
 
 // default volume per cli
 // }
@@ -190,15 +199,16 @@ fn main() {
     // });
 
     // Create queues
-    let (tx_m1, mut rx_m1) = queue(false);
-    let (tx_m2, mut rx_m2) = queue(false);
-    let (tx_m3, mut rx_m3) = queue(false);
-    let (tx_m35, mut rx_m35) = queue(false);
-    let (tx_m75, mut rx_m75) = queue(false);
+    let (tx_m1, mut rx_m1) = queue(true);
+    let (tx_m2, mut rx_m2) = queue(true);
+    let (tx_m3, mut rx_m3) = queue(true);
+    let (tx_m35, mut rx_m35) = queue(true);
+    let (tx_m75, mut rx_m75) = queue(true);
 
-    let (tx_m44_00, mut rx_m44_00) = queue(false);
-    let (tx_m44_22, mut rx_m44_22) = queue(false);
-    let (tx_m200, mut rx_m200) = queue(false);
+    let (tx_m44_00, mut rx_m44_00) = queue(true);
+    let (tx_m44_22, mut rx_m44_22) = queue(true);
+    let (tx_m200, mut rx_m200) = queue(true);
+    let (tx_m201, mut rx_m201) = queue(true);
 
     controller.add(rx_m1);
     controller.add(rx_m2);
@@ -208,9 +218,11 @@ fn main() {
     controller.add(rx_m44_00);
     controller.add(rx_m44_22);
     controller.add(rx_m200);
+    controller.add(rx_m201);
 
 
     let play_m1 = move |secs: u64| {
+        println!("Playing M1 for {} seconds.", secs);
         let recv = tx_m1.append_with_signal(
             source_m1
                 .clone()
@@ -220,6 +232,7 @@ fn main() {
     };
 
     let play_m2 = move |secs: u64| {
+        println!("Playing M2 for {} seconds.", secs);
         let recv = tx_m2.append_with_signal(
             source_m2
                 .clone()
@@ -229,6 +242,7 @@ fn main() {
     };
 
     let play_m3 = |secs: u64| {
+        println!("Playing M3 for {} seconds.", secs);
         let recv = tx_m3.append_with_signal(
             source_m3
                 .clone()
@@ -238,6 +252,7 @@ fn main() {
     };
 
     let play_m35 = move |secs: u64| {
+        println!("Playing M35 for {} seconds.", secs);
         let recv =
             tx_m35.append_with_signal(source_m35
                 .clone()
@@ -249,6 +264,7 @@ fn main() {
         recv
     };
     let play_m75 = move |secs: u64| {
+        println!("Playing M75 for {} seconds.", secs);
         let recv = tx_m75.append_with_signal(
             source_m75.clone()
                 .amplify(1.)
@@ -261,33 +277,47 @@ fn main() {
     };
 
     let play_m44_00 = move |secs: u64| {
+        println!("Playing M44.00 for {} seconds.", secs);
         tx_m44_00.append_with_signal(
             tria_44_00
                 .clone()
                 .amplify(0.33)
-                .take_duration_with_fade(Duration::from_secs(secs), Duration::from_millis(500)),
+                .take_duration_with_fade(Duration::from_secs(secs), Duration::from_millis(3000)),
         )
     };
 
     let play_m44_22 = move |secs: u64| {
+        println!("Playing M44.22 for {} seconds.", secs);
         tx_m44_22.append_with_signal(
             tria_44_22
                 .clone()
                 .amplify(0.33)
-                .take_duration_with_fade(Duration::from_secs(secs), Duration::from_millis(500)),
+                .take_duration_with_fade(Duration::from_secs(secs), Duration::from_millis(2500)),
         )
     };
 
     let play_m200 = move |secs: u64| {
+        println!("Playing M200.00 for {} seconds.", secs);
         tx_m200.append_with_signal(
             tria_200
                 .clone()
-                .amplify(0.33)
+                .amplify(0.2)
+                .take_duration_with_fade(Duration::from_secs(secs), Duration::from_millis(500)),
+        )
+    };
+
+    let play_m201 = move |secs: u64| {
+        println!("Playing M201.00 for {} seconds.", secs);
+        tx_m201.append_with_signal(
+            tria_201
+                .clone()
+                .amplify(0.2)
                 .take_duration_with_fade(Duration::from_secs(secs), Duration::from_millis(500)),
         )
     };
 
     sink.append(mixer);
+    //sink.set_speed(1);
     //sink.set_volume(0.3);
 
     let mut scheduler = Scheduler::with_tz(chrono::Utc);
@@ -318,9 +348,9 @@ fn main() {
 
     m.println("starting!").unwrap();
 
-    let rxx_m1 = play_m1(0);
-    let rxx_m2 = play_m2(0);
-    let rxx_m3 = play_m3(0);
+    // let rxx_m1 = play_m1(0);
+    // let rxx_m2 = play_m2(0);
+    // let rxx_m3 = play_m3(0);
 
     thread::spawn(move || {
         let mut rng = rand::thread_rng();
@@ -336,7 +366,6 @@ fn main() {
             //        let play_time_35 = rng.gen_range(5..10);
             //        let play_time_75 = rng.gen_range(5..10);
 
-            println!("starting 75");
             let rxx_m75 = play_m75(120);
             thread::sleep(Duration::from_secs(100));
             //            pb_m75.reset();
@@ -345,7 +374,6 @@ fn main() {
             //33333333    33333333
             //xxxxxx77777777    77777777
 
-            println!("starting 35");
             let rxx_m35 = play_m35(120);
             thread::sleep(Duration::from_secs(100));
             pb_m35.reset();
@@ -365,19 +393,16 @@ fn main() {
         let mut rng = rand::thread_rng();
         thread::sleep(Duration::from_secs(80));
 
-        println!("starting M1");
         let rxx_m35 = play_m1(30);
         thread::sleep(Duration::from_secs(25));
         // pb_m1.reset();
 
         loop {
-            println!("starting M2");
             let rxx_m75 = play_m2(30);
             thread::sleep(Duration::from_secs(60));
 
             // pb_m2.reset();
 
-            println!("starting M1");
             let rxx_m35 = play_m1(30);
             thread::sleep(Duration::from_secs(25));
             // pb_m1.reset();
@@ -386,14 +411,13 @@ fn main() {
 
     thread::spawn(move || {
         let mut rng = rand::thread_rng();
-        thread::sleep(Duration::from_secs(2));
+        thread::sleep(Duration::from_secs(120));
 
         loop {
-            println!("Tria");
 
-            play_m44_00(20);
-            play_m44_22(20);
-            thread::sleep(Duration::from_secs(10));
+            play_m44_00(31);
+            play_m44_22(30);
+            thread::sleep(Duration::from_secs(12));
             play_m200(5);
             play_m200(5);
             play_m200(5);
