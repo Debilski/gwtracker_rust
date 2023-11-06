@@ -3,7 +3,7 @@ mod take_with_fade;
 
 use std::fmt::Debug;
 use std::fs::File;
-use std::io::BufReader;
+use std::io::{BufReader, Write};
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::sync::Arc;
@@ -99,6 +99,13 @@ fn source(str: &str) -> SourceOnce {
 // default volume per cli
 // }
 
+/*
+
+M75 / M35
+
+
+*/
+
 trait SourceExt {
     #[inline]
     fn take_duration_with_fade(
@@ -129,10 +136,38 @@ fn sty(title: &str) -> ProgressStyle {
     //.progress_chars("##-")
 }
 
+
+fn download_tsv(url: &str) -> Result<(&str, usize), Box<dyn std::error::Error>> {
+    let filename = "O4_Events_cache.tsv";
+
+    let mut content = reqwest::blocking::get(url)?.error_for_status()?;
+    let mut text = content.text()?;
+    println!("{}", text);
+    let mut f = File::create(filename)?;
+    let bytes = text.as_bytes();
+    f.write_all(bytes)?;
+    Ok((filename, bytes.len()))
+}
+
+
 fn main() {
     println!("==== {} ====", "GWrust".blue());
 
-    //read_tsv("O4_Events.tsv");
+    let tsv_url = "https://raw.githubusercontent.com/Debilski/gwtracker_rust/main/O4_Events.tsv";
+
+    let res = download_tsv(tsv_url);
+    println!("Download status: {:?}", res);
+    if let Ok((filename, _size)) = res {
+        let elems = read_tsv(filename);
+
+        if let Ok(el) = elems {
+            println!("Last 3 events:");
+            for i  in el.len()-3..el.len() {
+                println!("{:?}", el[i]);
+            }
+        }
+    }
+
 
     let source_m1 = source("sounds/M-1ab_130.mp3").buffered().repeat_infinite();
     let source_m2 = source("sounds/M-2ab_140.mp3").buffered().repeat_infinite();
@@ -232,15 +267,19 @@ fn main() {
 
     let now_playing: Arc<DashMap<String, StartEnd>> = Arc::new(DashMap::new());
 
-    fn play_once(
+    fn play_once<S, Smpl>(
         log: &str,
-        source: &SourceOnceBuffered,
-        queue: &Arc<SourcesQueueInput<i16>>,
+        source: &S,
+        queue: &Arc<SourcesQueueInput<Smpl>>,
         duration_secs: u64,
         fade_millis: u64,
         volume: f32,
         now_playing: &Arc<DashMap<String, StartEnd>>,
-    ) {
+    ) where
+    S: Source<Item = Smpl> + Send + Clone + 'static,
+    S::Item: Sample,
+    Smpl: Sample + Send + 'static
+    {
         println!(
             "Playing {} for {} seconds. (Vol: {})",
             log.red(), duration_secs, volume
@@ -264,36 +303,30 @@ fn main() {
         });
     }
 
-    fn play_repeat(
+    fn play_repeat<S, Smpl>(
         log: &str,
-        source: &SourceInfiniteBuffered,
-        queue: &Arc<SourcesQueueInput<i16>>,
+        source: &S,
+        queue: &Arc<SourcesQueueInput<Smpl>>,
         duration_secs: u64,
         fade_millis: u64,
         volume: f32,
         now_playing: &Arc<DashMap<String, StartEnd>>,
-    ) {
-        println!(
-            "Playing {} for {} seconds. (Vol: {})",
-            log.bold().red(), duration_secs, volume
-        );
-        let recv =
-            queue.append_with_signal(source.clone().amplify(volume).take_duration_with_fade(
-                Duration::from_secs(duration_secs),
-                Duration::from_millis(fade_millis),
-            ));
-        let start = Local::now();
-        let finished = start
-            .checked_add_signed(chrono::Duration::seconds(duration_secs.try_into().unwrap()))
-            .unwrap();
-        let key = log.to_string();
-        now_playing.insert(key.clone(), StartEnd::new(start, finished));
-        let np = now_playing.clone();
-        thread::spawn(move || {
-            recv.recv();
-            np.remove(&key);
-            println!("Stopped {}.", &key);
-        });
+    )
+    where
+        S: Source<Item = Smpl> + Send + Clone + 'static,
+        S::Item: Sample,
+        Smpl: Sample + Send + 'static
+    {
+        // TODO: Add constraints for repeat?
+        play_once(
+            log,
+            source,
+            queue,
+            duration_secs,
+            fade_millis,
+            volume,
+            now_playing,
+        )
     }
 
     let play_m1 = {
@@ -321,24 +354,30 @@ fn main() {
         move |secs: u64| play_repeat("M75", &source_m75, &tx_m75, secs, 500, 0.5, &np)
     };
 
+    // Mit fadein?
     let play_m44_00 = {
         let np = now_playing.clone();
-        move |secs: u64| play_once("M44.00", &tria_44_00, &tx_m44_00, secs, 3000, 0.33, &np)
+        let fade_in = Duration::from_secs(10);
+        let with_fade = tria_44_00.fade_in(fade_in);
+        move |secs: u64| play_once("M44.00", &with_fade, &tx_m44_00, secs, 3000, 0.33, &np)
     };
 
+    // Mit fadein?
     let play_m44_22 = {
         let np = now_playing.clone();
-        move |secs: u64| play_once("M44.00", &tria_44_22, &tx_m44_22, secs, 2500, 0.33, &np)
+        let fade_in = Duration::from_secs(10);
+        let with_fade = tria_44_22.fade_in(fade_in);
+        move |secs: u64| play_once("M44.22", &with_fade, &tx_m44_22, secs, 2500, 0.33, &np)
     };
 
     let play_m200 = {
         let np = now_playing.clone();
-        move |secs: u64| play_once("M200.00", &tria_200, &tx_m200, secs, 500, 0.2, &np)
+        move |secs: u64| play_once("M200.00", &tria_200, &tx_m200, secs, 500, 0.1, &np)
     };
 
     let play_m201 = {
         let np = now_playing.clone();
-        move |secs: u64| play_once("M201.00", &tria_201, &tx_m201, secs, 500, 0.2, &np)
+        move |secs: u64| play_once("M201.00", &tria_201, &tx_m201, secs, 500, 0.1, &np)
     };
 
     sink.append(mixer);
