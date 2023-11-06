@@ -1,6 +1,7 @@
 mod datafetch;
 mod take_with_fade;
 
+use std::fmt::Debug;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
@@ -9,16 +10,19 @@ use std::sync::Arc;
 use std::thread::{self, sleep};
 use std::time::Duration;
 
+use chrono::{DateTime, Local};
+
 use dashmap::DashMap;
 use rand::Rng;
 use rodio::queue::{queue, SourcesQueueInput};
 use rodio::source::Source;
 use rodio::{dynamic_mixer, Decoder, OutputStream, Sample, Sink};
 
-
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use take_with_fade::TakeWithFade;
+
+use colored::Colorize;
 
 use datafetch::read_tsv;
 use tokio::time::sleep_until;
@@ -126,7 +130,9 @@ fn sty(title: &str) -> ProgressStyle {
 }
 
 fn main() {
-    read_tsv("O4_Events.tsv");
+    println!("==== {} ====", "GWrust".blue());
+
+    //read_tsv("O4_Events.tsv");
 
     let source_m1 = source("sounds/M-1ab_130.mp3").buffered().repeat_infinite();
     let source_m2 = source("sounds/M-2ab_140.mp3").buffered().repeat_infinite();
@@ -204,7 +210,27 @@ fn main() {
     controller.add(rx_m200);
     controller.add(rx_m201);
 
-    let now_playing = Arc::new(DashMap::new());
+    struct StartEnd {
+        from: DateTime<Local>,
+        until: DateTime<Local>,
+    }
+    impl StartEnd {
+        fn new(from: DateTime<Local>, until: DateTime<Local>) -> Self {
+            StartEnd { from, until }
+        }
+    }
+    impl Debug for StartEnd {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(
+                f,
+                "[from {} until {}]",
+                self.from.format("%H:%M:%S"),
+                self.until.format("%H:%M:%S")
+            )
+        }
+    }
+
+    let now_playing: Arc<DashMap<String, StartEnd>> = Arc::new(DashMap::new());
 
     fn play_once(
         log: &str,
@@ -213,21 +239,29 @@ fn main() {
         duration_secs: u64,
         fade_millis: u64,
         volume: f32,
-        now_playing: &Arc<DashMap<String, bool>>,
+        now_playing: &Arc<DashMap<String, StartEnd>>,
     ) {
         println!(
             "Playing {} for {} seconds. (Vol: {})",
-            log, duration_secs, volume
+            log.red(), duration_secs, volume
         );
         let recv =
             queue.append_with_signal(source.clone().amplify(volume).take_duration_with_fade(
                 Duration::from_secs(duration_secs),
                 Duration::from_millis(fade_millis),
             ));
+        let start = Local::now();
+        let finished = start
+            .checked_add_signed(chrono::Duration::seconds(duration_secs.try_into().unwrap()))
+            .unwrap();
         let key = log.to_string();
-        now_playing.insert(key.clone(), true);
+        now_playing.insert(key.clone(), StartEnd::new(start, finished));
         let np = now_playing.clone();
-        thread::spawn(move || { recv.recv(); np.remove(&key) ; });
+        thread::spawn(move || {
+            recv.recv();
+            np.remove(&key);
+            println!("Stopped {}.", &key);
+        });
     }
 
     fn play_repeat(
@@ -237,27 +271,34 @@ fn main() {
         duration_secs: u64,
         fade_millis: u64,
         volume: f32,
-        now_playing: &Arc<DashMap<String, bool>>,
+        now_playing: &Arc<DashMap<String, StartEnd>>,
     ) {
         println!(
             "Playing {} for {} seconds. (Vol: {})",
-            log, duration_secs, volume
+            log.bold().red(), duration_secs, volume
         );
         let recv =
             queue.append_with_signal(source.clone().amplify(volume).take_duration_with_fade(
                 Duration::from_secs(duration_secs),
                 Duration::from_millis(fade_millis),
             ));
-            let key = log.to_string();
-            now_playing.insert(key.clone(), true);
-            let np = now_playing.clone();
-            thread::spawn(move || { recv.recv(); np.remove(&key) ; });
+        let start = Local::now();
+        let finished = start
+            .checked_add_signed(chrono::Duration::seconds(duration_secs.try_into().unwrap()))
+            .unwrap();
+        let key = log.to_string();
+        now_playing.insert(key.clone(), StartEnd::new(start, finished));
+        let np = now_playing.clone();
+        thread::spawn(move || {
+            recv.recv();
+            np.remove(&key);
+            println!("Stopped {}.", &key);
+        });
     }
 
     let play_m1 = {
         let np = now_playing.clone();
-        move |secs: u64|
-        play_repeat("M1", &source_m1, &tx_m1, secs, 100, 1.0, &np)
+        move |secs: u64| play_repeat("M1", &source_m1, &tx_m1, secs, 100, 1.0, &np)
     };
 
     let play_m2 = {
@@ -309,11 +350,9 @@ fn main() {
     {
         let now_playing = now_playing.clone();
 
-        thread::spawn(move || {
-            loop {
-                thread::sleep(Duration::from_secs(10));
-                println!("{:?}", now_playing);
-            }
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_secs(10));
+            println!("{:?}", now_playing);
         });
     }
 
