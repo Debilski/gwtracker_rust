@@ -1,36 +1,32 @@
-mod log_source;
+mod datafetch;
 mod take_with_fade;
 
-use std::error;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::Receiver;
+use std::sync::Arc;
 use std::thread::{self, sleep};
 use std::time::Duration;
 
+use dashmap::DashMap;
 use rand::Rng;
-
-use rodio::queue::queue;
-use rodio::source::{SineWave, Source};
+use rodio::queue::{queue, SourcesQueueInput};
+use rodio::source::Source;
 use rodio::{dynamic_mixer, Decoder, OutputStream, Sample, Sink};
 
-use tokio;
-use tokio::select;
-
-use clokwerk::{Job, Scheduler, TimeUnits};
-// Import week days and WeekDay
-use clokwerk::Interval::*;
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
-use log_source::LogSource;
 use take_with_fade::TakeWithFade;
 
-const FADEOUTTIME: u64 = 0;
+use datafetch::read_tsv;
+use tokio::time::sleep_until;
 
 type SourceOnce = Decoder<BufReader<File>>;
+type SourceOnceBuffered = rodio::source::Buffered<SourceOnce>;
 type SourceInfinite = rodio::source::Repeat<SourceOnce>;
+type SourceInfiniteBuffered = rodio::source::Repeat<SourceOnceBuffered>;
 
 fn source(str: &str) -> SourceOnce {
     // We either check relative to the current folder and if nothing is found,
@@ -65,8 +61,7 @@ fn source(str: &str) -> SourceOnce {
     println!("Max amplitude: {:?}", max.unwrap());
 
     let file = File::open(path.clone()).unwrap();
-    let data = Decoder::new(BufReader::new(file))
-        .unwrap();
+    let data = Decoder::new(BufReader::new(file)).unwrap();
     data
 }
 
@@ -102,16 +97,6 @@ fn source(str: &str) -> SourceOnce {
 
 trait SourceExt {
     #[inline]
-    fn log_source(self, str: String) -> LogSource<Self>
-    where
-        Self: Sized,
-        Self: Source,
-        Self::Item: Sample,
-    {
-        log_source::log_source(self, str)
-    }
-
-    #[inline]
     fn take_duration_with_fade(
         self,
         duration: Duration,
@@ -140,10 +125,11 @@ fn sty(title: &str) -> ProgressStyle {
     //.progress_chars("##-")
 }
 
-
 fn main() {
-    let source_m1 = source("sounds/M-1ab_140.mp3").buffered().repeat_infinite();
-    let source_m2 = source("sounds/M-2ab_130.mp3").buffered().repeat_infinite();
+    read_tsv("O4_Events.tsv");
+
+    let source_m1 = source("sounds/M-1ab_130.mp3").buffered().repeat_infinite();
+    let source_m2 = source("sounds/M-2ab_140.mp3").buffered().repeat_infinite();
     let source_m3 = source("sounds/M-3ab_150.mp3").buffered().repeat_infinite();
     let source_m35 = source("sounds/M35-perma.mp3").buffered().repeat_infinite();
     let source_m75 = source("sounds/M75-perma.mp3").buffered().repeat_infinite();
@@ -152,13 +138,11 @@ fn main() {
     let tria_44_22 = source("sounds/Triangle_44,22-ca70-loop.mp3").buffered();
     let tria_44_23 = source("sounds/Triangle_44,23-100-loop.mp3").buffered();
     let tria_44_25 = source("sounds/Triangle_44,25-ca85-loop.mp3").buffered();
-    let tria_200 = source("sounds/Triangle_200-ca70 2 sec oh.mp3").buffered();
-    let tria_201 = source("sounds/Triangle_201_ca30 2 sec oh.mp3").buffered();
+    let tria_200 = source("sounds/Triangle_200-ca70 10sec oh.mp3").buffered();
+    let tria_201 = source("sounds/Triangle_201_ca30 10sec oh.mp3").buffered();
     let tria_202 = source("sounds/Triangle_202_ca20 2 sec oh.mp3").buffered();
     let tria_203 = source("sounds/Triangle_203_ca70 2 sec oh.mp3").buffered();
 
-    // Construct a dynamic controller and mixer, stream_handle, and sink.
-    // TODO Define sample type? ::<f32>?
     let (controller, mixer) = dynamic_mixer::mixer(2, 44_100);
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let sink = Sink::try_new(&stream_handle).unwrap();
@@ -199,16 +183,16 @@ fn main() {
     // });
 
     // Create queues
-    let (tx_m1, mut rx_m1) = queue(true);
-    let (tx_m2, mut rx_m2) = queue(true);
-    let (tx_m3, mut rx_m3) = queue(true);
-    let (tx_m35, mut rx_m35) = queue(true);
-    let (tx_m75, mut rx_m75) = queue(true);
+    let (tx_m1, rx_m1) = queue(true);
+    let (tx_m2, rx_m2) = queue(true);
+    let (tx_m3, rx_m3) = queue(true);
+    let (tx_m35, rx_m35) = queue(true);
+    let (tx_m75, rx_m75) = queue(true);
 
-    let (tx_m44_00, mut rx_m44_00) = queue(true);
-    let (tx_m44_22, mut rx_m44_22) = queue(true);
-    let (tx_m200, mut rx_m200) = queue(true);
-    let (tx_m201, mut rx_m201) = queue(true);
+    let (tx_m44_00, rx_m44_00) = queue(true);
+    let (tx_m44_22, rx_m44_22) = queue(true);
+    let (tx_m200, rx_m200) = queue(true);
+    let (tx_m201, rx_m201) = queue(true);
 
     controller.add(rx_m1);
     controller.add(rx_m2);
@@ -220,190 +204,169 @@ fn main() {
     controller.add(rx_m200);
     controller.add(rx_m201);
 
+    let now_playing = Arc::new(DashMap::new());
 
-    let play_m1 = move |secs: u64| {
-        println!("Playing M1 for {} seconds.", secs);
-        let recv = tx_m1.append_with_signal(
-            source_m1
-                .clone()
-                .take_duration_with_fade(Duration::from_secs(secs), Duration::from_millis(100)),
+    fn play_once(
+        log: &str,
+        source: &SourceOnceBuffered,
+        queue: &Arc<SourcesQueueInput<i16>>,
+        duration_secs: u64,
+        fade_millis: u64,
+        volume: f32,
+        now_playing: &Arc<DashMap<String, bool>>,
+    ) {
+        println!(
+            "Playing {} for {} seconds. (Vol: {})",
+            log, duration_secs, volume
         );
-        recv
-    };
-
-    let play_m2 = move |secs: u64| {
-        println!("Playing M2 for {} seconds.", secs);
-        let recv = tx_m2.append_with_signal(
-            source_m2
-                .clone()
-                .take_duration_with_fade(Duration::from_secs(secs), Duration::from_millis(100)),
-        );
-        recv
-    };
-
-    let play_m3 = |secs: u64| {
-        println!("Playing M3 for {} seconds.", secs);
-        let recv = tx_m3.append_with_signal(
-            source_m3
-                .clone()
-                .take_duration_with_fade(Duration::from_secs(secs), Duration::from_millis(100)),
-        );
-        recv
-    };
-
-    let play_m35 = move |secs: u64| {
-        println!("Playing M35 for {} seconds.", secs);
         let recv =
-            tx_m35.append_with_signal(source_m35
-                .clone()
-                .amplify(1.)
-                .take_duration_with_fade(
-                Duration::from_secs(secs),
-                Duration::from_millis(500),
+            queue.append_with_signal(source.clone().amplify(volume).take_duration_with_fade(
+                Duration::from_secs(duration_secs),
+                Duration::from_millis(fade_millis),
             ));
-        recv
-    };
-    let play_m75 = move |secs: u64| {
-        println!("Playing M75 for {} seconds.", secs);
-        let recv = tx_m75.append_with_signal(
-            source_m75.clone()
-                .amplify(1.)
-                .take_duration_with_fade(
-                Duration::from_secs(secs),
-                Duration::from_millis(500),
-            ),
+        let key = log.to_string();
+        now_playing.insert(key.clone(), true);
+        let np = now_playing.clone();
+        thread::spawn(move || { recv.recv(); np.remove(&key) ; });
+    }
+
+    fn play_repeat(
+        log: &str,
+        source: &SourceInfiniteBuffered,
+        queue: &Arc<SourcesQueueInput<i16>>,
+        duration_secs: u64,
+        fade_millis: u64,
+        volume: f32,
+        now_playing: &Arc<DashMap<String, bool>>,
+    ) {
+        println!(
+            "Playing {} for {} seconds. (Vol: {})",
+            log, duration_secs, volume
         );
-        recv
+        let recv =
+            queue.append_with_signal(source.clone().amplify(volume).take_duration_with_fade(
+                Duration::from_secs(duration_secs),
+                Duration::from_millis(fade_millis),
+            ));
+            let key = log.to_string();
+            now_playing.insert(key.clone(), true);
+            let np = now_playing.clone();
+            thread::spawn(move || { recv.recv(); np.remove(&key) ; });
+    }
+
+    let play_m1 = {
+        let np = now_playing.clone();
+        move |secs: u64|
+        play_repeat("M1", &source_m1, &tx_m1, secs, 100, 1.0, &np)
     };
 
-    let play_m44_00 = move |secs: u64| {
-        println!("Playing M44.00 for {} seconds.", secs);
-        tx_m44_00.append_with_signal(
-            tria_44_00
-                .clone()
-                .amplify(0.33)
-                .take_duration_with_fade(Duration::from_secs(secs), Duration::from_millis(3000)),
-        )
+    let play_m2 = {
+        let np = now_playing.clone();
+        move |secs: u64| play_repeat("M2", &source_m2, &tx_m2, secs, 100, 1.0, &np)
     };
 
-    let play_m44_22 = move |secs: u64| {
-        println!("Playing M44.22 for {} seconds.", secs);
-        tx_m44_22.append_with_signal(
-            tria_44_22
-                .clone()
-                .amplify(0.33)
-                .take_duration_with_fade(Duration::from_secs(secs), Duration::from_millis(2500)),
-        )
+    let play_m3 = {
+        let np = now_playing.clone();
+        move |secs: u64| play_repeat("M3", &source_m3, &tx_m3, secs, 100, 1.0, &np)
     };
 
-    let play_m200 = move |secs: u64| {
-        println!("Playing M200.00 for {} seconds.", secs);
-        tx_m200.append_with_signal(
-            tria_200
-                .clone()
-                .amplify(0.2)
-                .take_duration_with_fade(Duration::from_secs(secs), Duration::from_millis(500)),
-        )
+    let play_m35 = {
+        let np = now_playing.clone();
+        move |secs: u64| play_repeat("M35", &source_m35, &tx_m35, secs, 500, 0.5, &np)
     };
 
-    let play_m201 = move |secs: u64| {
-        println!("Playing M201.00 for {} seconds.", secs);
-        tx_m201.append_with_signal(
-            tria_201
-                .clone()
-                .amplify(0.2)
-                .take_duration_with_fade(Duration::from_secs(secs), Duration::from_millis(500)),
-        )
+    let play_m75 = {
+        let np = now_playing.clone();
+        move |secs: u64| play_repeat("M75", &source_m75, &tx_m75, secs, 500, 0.5, &np)
+    };
+
+    let play_m44_00 = {
+        let np = now_playing.clone();
+        move |secs: u64| play_once("M44.00", &tria_44_00, &tx_m44_00, secs, 3000, 0.33, &np)
+    };
+
+    let play_m44_22 = {
+        let np = now_playing.clone();
+        move |secs: u64| play_once("M44.00", &tria_44_22, &tx_m44_22, secs, 2500, 0.33, &np)
+    };
+
+    let play_m200 = {
+        let np = now_playing.clone();
+        move |secs: u64| play_once("M200.00", &tria_200, &tx_m200, secs, 500, 0.2, &np)
+    };
+
+    let play_m201 = {
+        let np = now_playing.clone();
+        move |secs: u64| play_once("M201.00", &tria_201, &tx_m201, secs, 500, 0.2, &np)
     };
 
     sink.append(mixer);
     //sink.set_speed(1);
     //sink.set_volume(0.3);
 
-    let mut scheduler = Scheduler::with_tz(chrono::Utc);
-
-    let c = controller.clone();
-
-    // scheduler.every(Seconds(0)).once().run(move || {
-    //     let (c, mixer) = dynamic_mixer::mixer::<f32>(2, 44_100);
-    //     let mut source_c = take_duration_with_fade(
-    //         SineWave::new(220.0),
-    //         Duration::from_secs(1),
-    //         Duration::from_millis(5000),
-    //     )
-    //     .fade_in(Duration::from_millis(100));
-    //     //let mut source_a = take_duration_with_fade(SineWave::new(330.63), Duration::from_secs(10), Duration::from_millis(1000)).fade_in(Duration::from_millis(100));
-    //     // let mut source_c = SineWave::new(261.63)
-    //     // .fade_in(Duration::from_millis(100))
-    //     // .take_duration(Duration::from_secs_f32(2.))
-    //     // ;
-    //     // source_c.set_filter_fadeout();
-    //     //let source_c = source_c.amplify(0.20);
-
-    //     //        let source_c = source_m75().convert_samples();
-    //     //c.add(source_a);
-    //     c.add(source_c);
-    //     controller.add(mixer);
-    // });
-
     m.println("starting!").unwrap();
 
-    // let rxx_m1 = play_m1(0);
-    // let rxx_m2 = play_m2(0);
-    // let rxx_m3 = play_m3(0);
+    {
+        let now_playing = now_playing.clone();
+
+        thread::spawn(move || {
+            loop {
+                thread::sleep(Duration::from_secs(10));
+                println!("{:?}", now_playing);
+            }
+        });
+    }
 
     thread::spawn(move || {
         let mut rng = rand::thread_rng();
-        thread::sleep(Duration::from_secs(0));
+        let duration_m75 = rng.gen_range(120..121);
 
-        //println!("starting 35");
-        let rxx_m35 = play_m35(60);
-        thread::sleep(Duration::from_secs(50));
-        //        pb_m35.reset();
-        //pb_m35.enable_steady_tick(Duration::from_millis(200));
+        play_m75(duration_m75);
+        // play for duration_m75 seconds.
+        // 1 minute before the end, we will add m35
+
+        thread::sleep(Duration::from_secs(duration_m75 - 60));
 
         loop {
-            //        let play_time_35 = rng.gen_range(5..10);
-            //        let play_time_75 = rng.gen_range(5..10);
+            let duration_m35 = rng.gen_range(120..180);
 
-            let rxx_m75 = play_m75(120);
+            play_m35(duration_m35);
+
+            // m35 should play alone for ~ 40 seconds, then we start again with m75
             thread::sleep(Duration::from_secs(100));
-            //            pb_m75.reset();
-            //            pb_m75.enable_steady_tick(Duration::from_millis(200));
 
-            //33333333    33333333
-            //xxxxxx77777777    77777777
+            let duration_m75 = rng.gen_range(120..600);
+            play_m75(duration_m75);
 
-            let rxx_m35 = play_m35(120);
-            thread::sleep(Duration::from_secs(100));
-            pb_m35.reset();
+            let sleep_time = duration_m75 - 60;
+            // if the sleep time is greater than 300, we intersperse a 30 second clip
+            // of m35 in between
+            if sleep_time > 300 {
+                let half_time = sleep_time / 2;
+                thread::sleep(Duration::from_secs(half_time));
+                play_m35(rng.gen_range(30..60));
+                thread::sleep(Duration::from_secs(sleep_time - half_time));
+            } else {
+                thread::sleep(Duration::from_secs(sleep_time));
+            }
         }
-
-        // for i in 0..1024 {
-
-        //     thread::sleep(Duration::from_millis(2));
-        //     pb_m2.set_message(format!("item #{}", i + 1));
-        //     pb_m2.inc(1);
-        // }
-        // //m_clone.println("pb3 is done!").unwrap();
-        // pb_m2.finish_with_message("done");
     });
 
     thread::spawn(move || {
         let mut rng = rand::thread_rng();
-        thread::sleep(Duration::from_secs(80));
+        thread::sleep(Duration::from_secs(8));
 
-        let rxx_m35 = play_m1(30);
+        play_m1(30);
         thread::sleep(Duration::from_secs(25));
         // pb_m1.reset();
 
         loop {
-            let rxx_m75 = play_m2(30);
+            play_m2(30);
             thread::sleep(Duration::from_secs(60));
 
             // pb_m2.reset();
 
-            let rxx_m35 = play_m1(30);
+            play_m1(30);
             thread::sleep(Duration::from_secs(25));
             // pb_m1.reset();
         }
@@ -414,128 +377,19 @@ fn main() {
         thread::sleep(Duration::from_secs(120));
 
         loop {
-
             play_m44_00(31);
             play_m44_22(30);
             thread::sleep(Duration::from_secs(12));
-            play_m200(5);
-            play_m200(5);
-            play_m200(5);
+            play_m200(10);
+            play_m201(9);
+            //play_m200(5);
+            //play_m200(5);
 
             thread::sleep(Duration::from_secs(200));
         }
     });
 
-    //let mut threads = vec![];
-
-    // let m_clone = m.clone();
-    // let h3 = thread::spawn(move || {
-    //     for i in 0..1024 {
-    //         thread::sleep(Duration::from_millis(2));
-    //         pb_m2.set_message(format!("item #{}", i + 1));
-    //         pb_m2.inc(1);
-    //     }
-    //     //m_clone.println("pb3 is done!").unwrap();
-    //     pb_m2.finish_with_message("done");
-    // });
-
-    // thread::spawn(move || {
-    //     let mut amp = 0.1;
-
-    //     loop {
-    //         amp += 0.001;
-    //         match rxx_m1.recv_timeout(Duration::from_millis(10)) {
-    //             Ok(_) => break,
-    //             Err(_) => {}
-    //         }
-    //     }
-    //     pb_m1_send.send(true);
-    //     //pb_m1.finish_with_message("done")
-    // });
-
-    // thread::spawn(move || {
-    //     rxx_m3.recv();
-    //     pb_m3.finish_with_message("done")
-    // });
-
-    // Or run it in a background thread
-    let thread_handle = scheduler.watch_thread(Duration::from_millis(100));
-    // The scheduler stops when `thread_handle` is dropped, or `stop` is called
-
-    // if let Ok(_) = rxx_m2.recv_timeout(Duration::from_millis(40)) {
-    //     println!("Finished");
-    // }
-    sleep(Duration::from_secs(10));
-
-    // tx_m1.append_with_signal(take_duration_with_fade(
-    //     source_m1,
-    //     Duration::from_secs(15),
-    //     Duration::from_millis(100),
-    // ));
-
-    // Sleep the thread until sink is empty.
     sink.sleep_until_end();
 
-    thread_handle.stop();
-}
-
-fn main3() {
-    let m = MultiProgress::new();
-    let sty = ProgressStyle::with_template(
-        "[{elapsed_precise}] {bar:40.cyan/blue} {pos:>7}/{len:7} {msg}",
-    )
-    .unwrap()
-    .progress_chars("##-");
-
-    let n = 200;
-    let pb = m.add(ProgressBar::new(n));
-    pb.set_style(sty.clone());
-    pb.set_message("todo");
-    let pb2 = m.add(ProgressBar::new(n));
-    pb2.set_style(sty.clone());
-    pb2.set_message("finished");
-
-    let pb3 = m.insert_after(&pb2, ProgressBar::new(1024));
-    pb3.set_style(sty);
-
-    m.println("starting!").unwrap();
-
-    let mut threads = vec![];
-
-    let m_clone = m.clone();
-    let h3 = thread::spawn(move || {
-        for i in 0..1024 {
-            thread::sleep(Duration::from_millis(2));
-            pb3.set_message(format!("item #{}", i + 1));
-            pb3.inc(1);
-        }
-        m_clone.println("pb3 is done!").unwrap();
-        pb3.finish_with_message("done");
-    });
-
-    for i in 0..n {
-        thread::sleep(Duration::from_millis(15));
-        if i == n / 3 {
-            thread::sleep(Duration::from_secs(2));
-        }
-        pb.inc(1);
-        let m = m.clone();
-        let pb2 = pb2.clone();
-        threads.push(thread::spawn(move || {
-            let spinner = m.add(ProgressBar::new_spinner().with_message(i.to_string()));
-            spinner.enable_steady_tick(Duration::from_millis(100));
-            thread::sleep(
-                rand::thread_rng().gen_range(Duration::from_secs(1)..Duration::from_secs(5)),
-            );
-            pb2.inc(1);
-        }));
-    }
-    pb.finish_with_message("all jobs started");
-
-    for thread in threads {
-        let _ = thread.join();
-    }
-    let _ = h3.join();
-    pb2.finish_with_message("all jobs done");
-    m.clear().unwrap();
+    loop {}
 }
