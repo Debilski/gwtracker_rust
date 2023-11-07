@@ -136,19 +136,16 @@ fn sty(title: &str) -> ProgressStyle {
     //.progress_chars("##-")
 }
 
-
 fn download_tsv(url: &str) -> Result<(&str, usize), Box<dyn std::error::Error>> {
     let filename = "O4_Events_cache.tsv";
 
-    let mut content = reqwest::blocking::get(url)?.error_for_status()?;
-    let mut text = content.text()?;
-    println!("{}", text);
+    let content = reqwest::blocking::get(url)?.error_for_status()?;
+    let text = content.text()?;
     let mut f = File::create(filename)?;
     let bytes = text.as_bytes();
     f.write_all(bytes)?;
     Ok((filename, bytes.len()))
 }
-
 
 fn main() {
     println!("==== {} ====", "GWrust".blue());
@@ -162,12 +159,11 @@ fn main() {
 
         if let Ok(el) = elems {
             println!("Last 3 events:");
-            for i  in el.len()-3..el.len() {
+            for i in el.len() - 3..el.len() {
                 println!("{:?}", el[i]);
             }
         }
     }
-
 
     let source_m1 = source("sounds/M-1ab_130.mp3").buffered().repeat_infinite();
     let source_m2 = source("sounds/M-2ab_140.mp3").buffered().repeat_infinite();
@@ -276,13 +272,15 @@ fn main() {
         volume: f32,
         now_playing: &Arc<DashMap<String, StartEnd>>,
     ) where
-    S: Source<Item = Smpl> + Send + Clone + 'static,
-    S::Item: Sample,
-    Smpl: Sample + Send + 'static
+        S: Source<Item = Smpl> + Send + Clone + 'static,
+        S::Item: Sample,
+        Smpl: Sample + Send + 'static,
     {
         println!(
             "Playing {} for {} seconds. (Vol: {})",
-            log.red(), duration_secs, volume
+            log.red(),
+            duration_secs,
+            volume
         );
         let recv =
             queue.append_with_signal(source.clone().amplify(volume).take_duration_with_fade(
@@ -311,11 +309,10 @@ fn main() {
         fade_millis: u64,
         volume: f32,
         now_playing: &Arc<DashMap<String, StartEnd>>,
-    )
-    where
+    ) where
         S: Source<Item = Smpl> + Send + Clone + 'static,
         S::Item: Sample,
-        Smpl: Sample + Send + 'static
+        Smpl: Sample + Send + 'static,
     {
         // TODO: Add constraints for repeat?
         play_once(
@@ -395,76 +392,78 @@ fn main() {
         });
     }
 
-    thread::spawn(move || {
-        let mut rng = rand::thread_rng();
-        let duration_m75 = rng.gen_range(120..121);
+    thread::scope(|s| {
+        s.spawn(|| {
+            let mut rng = rand::thread_rng();
+            let duration_m75 = rng.gen_range(120..121);
 
-        play_m75(duration_m75);
-        // play for duration_m75 seconds.
-        // 1 minute before the end, we will add m35
-
-        thread::sleep(Duration::from_secs(duration_m75 - 60));
-
-        loop {
-            let duration_m35 = rng.gen_range(120..180);
-
-            play_m35(duration_m35);
-
-            // m35 should play alone for ~ 40 seconds, then we start again with m75
-            thread::sleep(Duration::from_secs(100));
-
-            let duration_m75 = rng.gen_range(120..600);
             play_m75(duration_m75);
+            // play for duration_m75 seconds.
+            // 1 minute before the end, we will add m35
 
-            let sleep_time = duration_m75 - 60;
-            // if the sleep time is greater than 300, we intersperse a 30 second clip
-            // of m35 in between
-            if sleep_time > 300 {
-                let half_time = sleep_time / 2;
-                thread::sleep(Duration::from_secs(half_time));
-                play_m35(rng.gen_range(30..60));
-                thread::sleep(Duration::from_secs(sleep_time - half_time));
-            } else {
-                thread::sleep(Duration::from_secs(sleep_time));
+            thread::sleep(Duration::from_secs(duration_m75 - 60));
+
+            loop {
+                let duration_m35 = rng.gen_range(120..180);
+
+                play_m35(duration_m35);
+
+                // m35 should play alone for ~ 40 seconds, then we start again with m75
+                thread::sleep(Duration::from_secs(100));
+
+                let duration_m75 = rng.gen_range(120..600);
+                play_m75(duration_m75);
+
+                let sleep_time = duration_m75 - 60;
+                // if the sleep time is greater than 300, we intersperse a 30 second clip
+                // of m35 in between
+                if sleep_time > 300 {
+                    let half_time = sleep_time / 2;
+                    thread::sleep(Duration::from_secs(half_time));
+                    play_m35(rng.gen_range(30..60));
+                    thread::sleep(Duration::from_secs(sleep_time - half_time));
+                } else {
+                    thread::sleep(Duration::from_secs(sleep_time));
+                }
             }
-        }
-    });
+        });
 
-    thread::spawn(move || {
-        let mut rng = rand::thread_rng();
-        thread::sleep(Duration::from_secs(8));
-
-        play_m1(30);
-        thread::sleep(Duration::from_secs(25));
-        // pb_m1.reset();
-
-        loop {
-            play_m2(30);
-            thread::sleep(Duration::from_secs(60));
-
-            // pb_m2.reset();
+        s.spawn(|| {
+            let mut rng = rand::thread_rng();
+            thread::sleep(Duration::from_secs(8));
 
             play_m1(30);
             thread::sleep(Duration::from_secs(25));
             // pb_m1.reset();
-        }
-    });
 
-    thread::spawn(move || {
-        let mut rng = rand::thread_rng();
-        thread::sleep(Duration::from_secs(120));
+            loop {
+                play_m2(30);
+                thread::sleep(Duration::from_secs(60));
 
-        loop {
-            play_m44_00(31);
-            play_m44_22(30);
-            thread::sleep(Duration::from_secs(12));
-            play_m200(10);
-            play_m201(9);
-            //play_m200(5);
-            //play_m200(5);
+                // pb_m2.reset();
 
-            thread::sleep(Duration::from_secs(200));
-        }
+                play_m1(30);
+                thread::sleep(Duration::from_secs(25));
+                // pb_m1.reset();
+            }
+        });
+
+        s.spawn(|| {
+            let mut rng = rand::thread_rng();
+            thread::sleep(Duration::from_secs(120));
+
+            loop {
+                play_m44_00(31);
+                play_m44_22(30);
+                thread::sleep(Duration::from_secs(12));
+                play_m200(10);
+                play_m201(9);
+                //play_m200(5);
+                //play_m200(5);
+
+                thread::sleep(Duration::from_secs(200));
+            }
+        });
     });
 
     sink.sleep_until_end();
