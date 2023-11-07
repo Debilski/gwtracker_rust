@@ -96,6 +96,8 @@ fn source(str: &str) -> SourceOnce {
 // Zyklisch mit Überlappungen variieren
 // Hauptsächlich spielen, wenn das relative M1,2,3 auch spielt
 
+// Wenn unscharf: Grau ausschalten
+
 // default volume per cli
 // }
 
@@ -171,10 +173,10 @@ fn main() {
     let source_m35 = source("sounds/M35-perma.mp3").buffered().repeat_infinite();
     let source_m75 = source("sounds/M75-perma.mp3").buffered().repeat_infinite();
 
-    let tria_44_00 = source("sounds/Triangle_44,00-50-loop.mp3").buffered();
-    let tria_44_22 = source("sounds/Triangle_44,22-ca70-loop.mp3").buffered();
-    let tria_44_23 = source("sounds/Triangle_44,23-100-loop.mp3").buffered();
-    let tria_44_25 = source("sounds/Triangle_44,25-ca85-loop.mp3").buffered();
+    let tria_44_00 = source("sounds/Triangle_44,00-50-loop.mp3").buffered().repeat_infinite();
+    let tria_44_22 = source("sounds/Triangle_44,22-ca70-loop.mp3").buffered().repeat_infinite();
+    let tria_44_23 = source("sounds/Triangle_44,23-100-loop.mp3").buffered().repeat_infinite();
+    let tria_44_25 = source("sounds/Triangle_44,25-ca85-loop.mp3").buffered().repeat_infinite();
     let tria_200 = source("sounds/Triangle_200-ca70 10sec oh.mp3").buffered();
     let tria_201 = source("sounds/Triangle_201_ca30 10sec oh.mp3").buffered();
     let tria_202 = source("sounds/Triangle_202_ca20 2 sec oh.mp3").buffered();
@@ -354,27 +356,27 @@ fn main() {
     // Mit fadein?
     let play_m44_00 = {
         let np = now_playing.clone();
-        let fade_in = Duration::from_secs(10);
+        let fade_in = Duration::from_secs(30);
         let with_fade = tria_44_00.fade_in(fade_in);
-        move |secs: u64| play_once("M44.00", &with_fade, &tx_m44_00, secs, 3000, 0.33, &np)
+        move |secs: u64| play_once("M44.00", &with_fade, &tx_m44_00, secs, 30000, 0.33, &np)
     };
 
     // Mit fadein?
     let play_m44_22 = {
         let np = now_playing.clone();
-        let fade_in = Duration::from_secs(10);
+        let fade_in = Duration::from_secs(30);
         let with_fade = tria_44_22.fade_in(fade_in);
-        move |secs: u64| play_once("M44.22", &with_fade, &tx_m44_22, secs, 2500, 0.33, &np)
+        move |secs: u64| play_once("M44.22", &with_fade, &tx_m44_22, secs, 25000, 0.33, &np)
     };
 
     let play_m200 = {
         let np = now_playing.clone();
-        move |secs: u64| play_once("M200.00", &tria_200, &tx_m200, secs, 500, 0.1, &np)
+        move |secs: u64| play_once("M200.00", &tria_200, &tx_m200, secs, 500, 0.05, &np)
     };
 
     let play_m201 = {
         let np = now_playing.clone();
-        move |secs: u64| play_once("M201.00", &tria_201, &tx_m201, secs, 500, 0.1, &np)
+        move |secs: u64| play_once("M201.00", &tria_201, &tx_m201, secs, 500, 0.05, &np)
     };
 
     sink.append(mixer);
@@ -390,6 +392,117 @@ fn main() {
             thread::sleep(Duration::from_secs(10));
             println!("{:?}", now_playing);
         });
+    }
+
+    loop {
+        let mut rng = rand::thread_rng();
+        // Looping for around ten minutes:
+        let mut remainder: u32 = 60 * 10;
+
+        let mut sleep = |secs: u32, fuzzy: bool| {
+            if fuzzy {
+                let fuzz: i64 = rng.gen_range(-200..=200);
+                let secs: i64 = secs.into();
+                let millis: i64 = secs * 1000;
+                let total = millis + fuzz;
+                thread::sleep(Duration::from_millis(u64::try_from(total).unwrap_or(0)));
+            } else {
+                thread::sleep(Duration::from_secs(secs.into()));
+            }
+            remainder = remainder.checked_sub(secs).unwrap_or(0);
+        };
+
+        // Starting with only M35 for ~ 30 seconds
+        play_m35(10 * 60);
+        sleep(30, false);
+        // m75 will play for ~ 9 minutes
+        play_m75(9 * 60);
+        sleep(30, false);
+
+        // // First run of Masses: M1/M2 for ~ 3:30 minutes
+        play_m1(210);
+        sleep(10, false);
+        play_m2(190);
+        sleep(5 * 10, false);
+
+        // Short bursts of M200, M201 for 20 seconds
+        play_m200(2);
+        sleep(1, true);
+        play_m201(2);
+        sleep(1, true);
+        play_m200(2);
+        sleep(1, true);
+        play_m201(2);
+        sleep(1, true);
+        play_m200(2);
+        sleep(1, true);
+        play_m201(2);
+        sleep(1, true);
+        sleep(4, true);
+        play_m200(2);
+        sleep(1, true);
+        play_m201(2);
+        sleep(1, true);
+        play_m200(2);
+        sleep(1, true);
+        play_m201(2);
+        sleep(1, true);
+        play_m200(2);
+        sleep(1, true);
+        play_m201(2);
+        sleep(1, true);
+        sleep(4, true);
+
+        sleep(5 * 10, false);
+
+
+        play_m44_00(25 * 10);
+        sleep(10, false);
+        play_m44_22(23 * 10);
+
+
+        sleep(14 * 10, false);
+
+        // Second run of Masses: M1/M2 for ~ 3:30 minutes
+        play_m1(210);
+        sleep(10, false);
+        play_m2(190);
+
+        // Short bursts of M200, M201 for 20 seconds
+        play_m200(2);
+        sleep(1, true);
+        play_m201(2);
+        sleep(1, true);
+        play_m200(2);
+        sleep(1, true);
+        play_m201(2);
+        sleep(1, true);
+        play_m200(2);
+        sleep(1, true);
+        play_m201(2);
+        sleep(1, true);
+        sleep(4, true);
+        play_m200(2);
+        sleep(1, true);
+        play_m201(2);
+        sleep(1, true);
+        play_m200(2);
+        sleep(1, true);
+        play_m201(2);
+        sleep(1, true);
+        play_m200(2);
+        sleep(1, true);
+        play_m201(2);
+        sleep(1, true);
+        sleep(4, true);
+
+
+//        sleep(200, false);
+
+
+
+
+        thread::sleep(Duration::from_secs(remainder.into())); // wait until silence
     }
 
     thread::scope(|s| {
@@ -466,7 +579,7 @@ fn main() {
         });
     });
 
-    sink.sleep_until_end();
+
 
     loop {}
 }
