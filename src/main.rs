@@ -424,6 +424,16 @@ fn main() {
         play_m2(190);
         sleep(5 * 10, false);
 
+        sleep(2 * 10, false);
+
+        sleep(5 * 10, false);
+
+        play_m44_00(25 * 10);
+        sleep(10, false);
+        play_m44_22(23 * 10);
+
+        sleep(9 * 10, false);
+
         // Short bursts of M200, M201 for 20 seconds
         play_m200(2);
         sleep(1, true);
@@ -452,15 +462,7 @@ fn main() {
         sleep(1, true);
         sleep(4, true);
 
-        sleep(5 * 10, false);
-
-
-        play_m44_00(25 * 10);
-        sleep(10, false);
-        play_m44_22(23 * 10);
-
-
-        sleep(14 * 10, false);
+        sleep(3 * 10, false);
 
         // Second run of Masses: M1/M2 for ~ 3:30 minutes
         play_m1(210);
