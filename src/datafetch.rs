@@ -12,7 +12,7 @@ use std::{error::Error, fs::File};
 // (12) Notes, Ref
 type TSVRecord = HashMap<String, String>;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct GWData {
     id: String,
 
@@ -64,8 +64,7 @@ where
     let buf = String::deserialize(deserializer)?;
 
     let split = buf.split(&['±']).next().unwrap_or("");
-    let r = str::parse::<u64>(&split).map_err(serde::de::Error::custom);
-    r
+    str::parse::<u64>(&split).map_err(serde::de::Error::custom)
 }
 
 fn deserialize_pmf<'de, D>(deserializer: D) -> Result<f64, D::Error>
@@ -75,8 +74,7 @@ where
     let buf = String::deserialize(deserializer)?;
 
     let split = buf.split(&['±']).next().unwrap_or("");
-    let r = str::parse::<f64>(&split).map_err(serde::de::Error::custom);
-    r
+    str::parse::<f64>(&split).map_err(serde::de::Error::custom)
 }
 
 pub fn read_tsv(file_path: &str) -> Result<Vec<GWData>, Box<dyn Error>> {
