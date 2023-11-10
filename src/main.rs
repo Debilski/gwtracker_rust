@@ -2,12 +2,11 @@ mod datafetch;
 mod take_with_fade;
 
 use std::fmt::Debug;
-use std::fs::File;
+use std::fs::{File, self};
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
-use std::sync::mpsc::Receiver;
+use std::thread;
 use std::sync::Arc;
-use std::thread::{self, sleep};
 use std::time::Duration;
 
 use chrono::{DateTime, Local};
@@ -25,6 +24,8 @@ use take_with_fade::TakeWithFade;
 use colored::Colorize;
 
 use datafetch::read_tsv;
+
+use crate::datafetch::GWData;
 
 type SourceOnce = Decoder<BufReader<File>>;
 type SourceOnceBuffered = rodio::source::Buffered<SourceOnce>;
@@ -139,17 +140,22 @@ fn sty(title: &str) -> ProgressStyle {
 
 fn download_tsv(url: &str) -> Result<(&str, usize), Box<dyn std::error::Error>> {
     let filename = "O4_Events_cache.tsv";
+    let file_temp = format!(".{filename}.tmp");
 
     let content = reqwest::blocking::get(url)?.error_for_status()?;
     let text = content.text()?;
-    let mut f = File::create(filename)?;
+    let mut f = File::create(&file_temp)?;
     let bytes = text.as_bytes();
     f.write_all(bytes)?;
+
+    fs::rename(file_temp, filename)?;
     Ok((filename, bytes.len()))
 }
 
 fn main() {
     println!("==== {} ====", "GWrust".blue());
+
+    let mut last_3_events: Vec<GWData> = Vec::new();
 
     let tsv_url = "https://raw.githubusercontent.com/Debilski/gwtracker_rust/main/O4_Events.tsv";
 
@@ -160,11 +166,14 @@ fn main() {
 
         if let Ok(el) = elems {
             println!("Last 3 events:");
-            for i in el.len() - 3..el.len() {
-                println!("{:?}", el[i]);
-            }
+
+            last_3_events = el[el.len() - 3..el.len()].to_vec();
         }
     }
+
+    last_3_events
+        .iter()
+        .for_each(|ev| println!("{ev:?}"));
 
     let source_m1 = source("sounds/M-1ab_130.mp3").buffered().repeat_infinite();
     let source_m2 = source("sounds/M-2ab_140.mp3").buffered().repeat_infinite();
@@ -172,10 +181,18 @@ fn main() {
     let source_m35 = source("sounds/M35-perma.mp3").buffered().repeat_infinite();
     let source_m75 = source("sounds/M75-perma.mp3").buffered().repeat_infinite();
 
-    let tria_44_00 = source("sounds/Triangle_44,00-50-loop.mp3").buffered().repeat_infinite();
-    let tria_44_22 = source("sounds/Triangle_44,22-ca70-loop.mp3").buffered().repeat_infinite();
-    let tria_44_23 = source("sounds/Triangle_44,23-100-loop.mp3").buffered().repeat_infinite();
-    let tria_44_25 = source("sounds/Triangle_44,25-ca85-loop.mp3").buffered().repeat_infinite();
+    let tria_44_00 = source("sounds/Triangle_44,00-50-loop.mp3")
+        .buffered()
+        .repeat_infinite();
+    let tria_44_22 = source("sounds/Triangle_44,22-ca70-loop.mp3")
+        .buffered()
+        .repeat_infinite();
+    let tria_44_23 = source("sounds/Triangle_44,23-100-loop.mp3")
+        .buffered()
+        .repeat_infinite();
+    let tria_44_25 = source("sounds/Triangle_44,25-ca85-loop.mp3")
+        .buffered()
+        .repeat_infinite();
     let tria_200 = source("sounds/Triangle_200-ca70 10sec oh.mp3").buffered();
     let tria_201 = source("sounds/Triangle_201_ca30 10sec oh.mp3").buffered();
     let tria_202 = source("sounds/Triangle_202_ca20 2 sec oh.mp3").buffered();
