@@ -1,16 +1,14 @@
-use serde::{Deserialize, Deserializer};
+use std::error::Error;
+use std::fs::File;
 
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
-
+use chrono::NaiveDate;
 use csv::ReaderBuilder;
-use std::collections::HashMap;
-use std::{error::Error, fs::File};
+use serde::{Deserialize, Deserializer};
 
 // (0)GW event, Detection time, Location area, Luminosity distance,
 // (4)Detector, False Alarm Rate, False Alarm chance in O4,
 // (7) NS / NS, NS / BH, BH / BH, Mass gap, Terrestrial,
 // (12) Notes, Ref
-type TSVRecord = HashMap<String, String>;
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct GWData {
