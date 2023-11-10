@@ -19,13 +19,11 @@ use rodio::{dynamic_mixer, Decoder, OutputStream, Sample, Sink};
 
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
-use take_with_fade::TakeWithFade;
-
 use colored::Colorize;
 
-use datafetch::read_tsv;
-
+use crate::datafetch::read_tsv;
 use crate::datafetch::GWData;
+use crate::take_with_fade::TakeWithFade;
 
 type SourceOnce = Decoder<BufReader<File>>;
 type SourceOnceBuffered = rodio::source::Buffered<SourceOnce>;
