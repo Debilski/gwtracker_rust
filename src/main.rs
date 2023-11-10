@@ -2,11 +2,11 @@ mod datafetch;
 mod take_with_fade;
 
 use std::fmt::Debug;
-use std::fs::{File, self};
+use std::fs::{self, File};
 use std::io::{BufReader, Write};
 use std::path::PathBuf;
-use std::thread;
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 
 use chrono::{DateTime, Local};
@@ -171,9 +171,7 @@ fn main() {
         }
     }
 
-    last_3_events
-        .iter()
-        .for_each(|ev| println!("{ev:?}"));
+    last_3_events.iter().for_each(|ev| println!("{ev:?}"));
 
     let source_m1 = source("sounds/M-1ab_130.mp3").buffered().repeat_infinite();
     let source_m2 = source("sounds/M-2ab_140.mp3").buffered().repeat_infinite();
