@@ -1,4 +1,4 @@
-use std::time::Duration;
+use std::{fmt::Debug, time::Duration};
 
 use rodio::{Sample, Source};
 
@@ -6,13 +6,9 @@ use rodio::{Sample, Source};
 pub fn log_source<I>(input: I, str: String) -> LogSource<I>
 where
     I: Source,
-    I::Item: Sample,
+    I::Item: Sample + Debug,
 {
-    LogSource {
-        input,
-        log: str,
-        has_logged: false,
-    }
+    LogSource { input, log: str, has_logged: false, max: None }
 }
 
 /// A source that LogSources the given source.
@@ -25,12 +21,13 @@ where
     input: I,
     log: String,
     has_logged: bool,
+    max: Option<I::Item>,
 }
 
 impl<I> Iterator for LogSource<I>
 where
     I: Source,
-    I::Item: Sample,
+    I::Item: Sample + Debug,
 {
     type Item = <I as Iterator>::Item;
 
@@ -40,6 +37,10 @@ where
             if !self.has_logged {
                 println!("Beggining source {:?}", self.log);
                 self.has_logged = true;
+            }
+            if Some(value) > self.max {
+                println!("{:?}", value);
+                self.max = Some(value);
             }
             return Some(value);
         } else {
@@ -57,7 +58,7 @@ where
 impl<I> Source for LogSource<I>
 where
     I: Iterator + Source,
-    I::Item: Sample,
+    I::Item: Sample + Debug,
 {
     #[inline]
     fn current_frame_len(&self) -> Option<usize> {
