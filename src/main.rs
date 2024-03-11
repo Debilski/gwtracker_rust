@@ -194,7 +194,7 @@ fn main() {
     let tria_202 = source("sounds/Triangle_202_ca20 2 sec oh.mp3").buffered();
     let tria_203 = source("sounds/Triangle_203_ca70 2 sec oh.mp3").buffered();
 
-    let (controller, mixer) = dynamic_mixer::mixer(2, 44_100);
+    let (controller, mixer) = dynamic_mixer::mixer::<f32>(2, 44_100);
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
     let sink = Sink::try_new(&stream_handle).unwrap();
 
@@ -245,15 +245,15 @@ fn main() {
     let (tx_m200, rx_m200) = queue(true);
     let (tx_m201, rx_m201) = queue(true);
 
-    controller.add(rx_m1);
-    controller.add(rx_m2);
-    controller.add(rx_m3);
-    controller.add(rx_m35);
-    controller.add(rx_m75);
-    controller.add(rx_m44_00);
-    controller.add(rx_m44_22);
-    controller.add(rx_m200);
-    controller.add(rx_m201);
+    controller.add(rx_m1.convert_samples());
+    controller.add(rx_m2.convert_samples());
+    controller.add(rx_m3.convert_samples());
+    controller.add(rx_m35.convert_samples());
+    controller.add(rx_m75.convert_samples());
+    controller.add(rx_m44_00.convert_samples());
+    controller.add(rx_m44_22.convert_samples());
+    controller.add(rx_m200.convert_samples());
+    controller.add(rx_m201.convert_samples());
 
     struct StartEnd {
         from: DateTime<Local>,
