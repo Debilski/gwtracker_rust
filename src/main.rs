@@ -23,8 +23,8 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 
 use colored::Colorize;
 
-use crate::datafetch::read_tsv;
 use crate::datafetch::GWData;
+use crate::datafetch::{read_gracedb, read_tsv};
 use crate::take_with_fade::TakeWithFade;
 
 type SourceOnce = Decoder<BufReader<File>>;
@@ -193,9 +193,13 @@ fn main() {
 
     println!("==== {} ====", "GWrust".blue());
 
+    let res = read_gracedb();
+    println!("{res:?}");
+
     let mut last_3_events: Vec<GWData> = Vec::new();
 
-    let tsv_url = "https://raw.githubusercontent.com/Debilski/gwtracker_rust/main/O4_Events.tsv";
+    let tsv_url =
+        "https://raw.githubusercontent.com/Debilski/gwtracker_rust/main/O4_Events.tsv";
 
     let res = download_tsv(tsv_url);
     println!("Download status: {:?}", res);
