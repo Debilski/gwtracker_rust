@@ -1,4 +1,5 @@
 mod datafetch;
+mod log_source;
 mod take_with_fade;
 
 use std::fmt::Debug;
@@ -11,6 +12,7 @@ use std::time::Duration;
 
 use chrono::{DateTime, Local};
 
+use clap::Parser;
 use dashmap::DashMap;
 use rand::Rng;
 use rodio::queue::{queue, SourcesQueueInput};
@@ -150,7 +152,45 @@ fn download_tsv(url: &str) -> Result<(&str, usize), Box<dyn std::error::Error>> 
     Ok((filename, bytes.len()))
 }
 
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    #[arg(long, default_value_t = false)]
+    log_sample_aplitudes: bool,
+
+    #[arg(long, default_value_t = 1.0)]
+    vol_m1: f32,
+
+    #[arg(long, default_value_t = 1.0)]
+    vol_m2: f32,
+
+    #[arg(long, default_value_t = 1.0)]
+    vol_m3: f32,
+
+    #[arg(long, default_value_t = 0.5)]
+    vol_m35: f32,
+
+    #[arg(long, default_value_t = 0.5)]
+    vol_m75: f32,
+
+    #[arg(long, default_value_t = 0.33)]
+    vol_m44_00: f32,
+
+    #[arg(long, default_value_t = 0.33)]
+    vol_m44_22: f32,
+
+    #[arg(long, default_value_t = 0.05)]
+    vol_m200: f32,
+
+    #[arg(long, default_value_t = 0.05)]
+    vol_m201: f32,
+}
+
+
 fn main() {
+    let args = Args::parse();
+
     println!("==== {} ====", "GWrust".blue());
 
     let mut last_3_events: Vec<GWData> = Vec::new();
@@ -329,40 +369,32 @@ fn main() {
         Smpl: Sample + Send + 'static,
     {
         // TODO: Add constraints for repeat?
-        play_once(
-            log,
-            source,
-            queue,
-            duration_secs,
-            fade_millis,
-            volume,
-            now_playing,
-        )
+        play_once(log, source, queue, duration_secs, fade_millis, volume, now_playing)
     }
 
     let play_m1 = {
         let np = now_playing.clone();
-        move |secs: u64| play_repeat("M1", &source_m1, &tx_m1, secs, 100, 1.0, &np)
+        move |secs: u64| play_repeat("M1", &source_m1, &tx_m1, secs, 100, args.vol_m1, &np)
     };
 
     let play_m2 = {
         let np = now_playing.clone();
-        move |secs: u64| play_repeat("M2", &source_m2, &tx_m2, secs, 100, 1.0, &np)
+        move |secs: u64| play_repeat("M2", &source_m2, &tx_m2, secs, 100, args.vol_m2, &np)
     };
 
     let play_m3 = {
         let np = now_playing.clone();
-        move |secs: u64| play_repeat("M3", &source_m3, &tx_m3, secs, 100, 1.0, &np)
+        move |secs: u64| play_repeat("M3", &source_m3, &tx_m3, secs, 100, args.vol_m3, &np)
     };
 
     let play_m35 = {
         let np = now_playing.clone();
-        move |secs: u64| play_repeat("M35", &source_m35, &tx_m35, secs, 500, 0.5, &np)
+        move |secs: u64| play_repeat("M35", &source_m35, &tx_m35, secs, 500, args.vol_m35, &np)
     };
 
     let play_m75 = {
         let np = now_playing.clone();
-        move |secs: u64| play_repeat("M75", &source_m75, &tx_m75, secs, 500, 0.5, &np)
+        move |secs: u64| play_repeat("M75", &source_m75, &tx_m75, secs, 500, args.vol_m75, &np)
     };
 
     // Mit fadein?
@@ -370,7 +402,9 @@ fn main() {
         let np = now_playing.clone();
         let fade_in = Duration::from_secs(30);
         let with_fade = tria_44_00.fade_in(fade_in);
-        move |secs: u64| play_once("M44.00", &with_fade, &tx_m44_00, secs, 30000, 0.33, &np)
+        move |secs: u64| {
+            play_once("M44.00", &with_fade, &tx_m44_00, secs, 30000, args.vol_m44_00, &np)
+        }
     };
 
     // Mit fadein?
@@ -378,20 +412,27 @@ fn main() {
         let np = now_playing.clone();
         let fade_in = Duration::from_secs(30);
         let with_fade = tria_44_22.fade_in(fade_in);
-        move |secs: u64| play_once("M44.22", &with_fade, &tx_m44_22, secs, 25000, 0.33, &np)
+        move |secs: u64| {
+            play_once("M44.22", &with_fade, &tx_m44_22, secs, 25000, args.vol_m44_22, &np)
+        }
     };
 
     let play_m200 = {
         let np = now_playing.clone();
-        move |secs: u64| play_once("M200.00", &tria_200, &tx_m200, secs, 500, 0.05, &np)
+        move |secs: u64| play_once("M200.00", &tria_200, &tx_m200, secs, 500, args.vol_m200, &np)
     };
 
     let play_m201 = {
         let np = now_playing.clone();
-        move |secs: u64| play_once("M201.00", &tria_201, &tx_m201, secs, 500, 0.05, &np)
+        move |secs: u64| play_once("M201.00", &tria_201, &tx_m201, secs, 500, args.vol_m201, &np)
     };
 
-    sink.append(mixer);
+    if args.log_sample_aplitudes {
+        let logged = crate::log_source::log_source(mixer, "mixer".to_string());
+        sink.append(logged);
+    } else {
+        sink.append(mixer);
+    }
     //sink.set_speed(1);
     //sink.set_volume(0.3);
 
