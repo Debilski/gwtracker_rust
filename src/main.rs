@@ -46,10 +46,7 @@ fn source(str: &str) -> SourceOnce {
         if rel_to_exe_path.exists() {
             rel_to_exe_path
         } else {
-            println!(
-                "Neither {:?} nor {:?} exit.",
-                rel_to_cwd_path, rel_to_exe_path
-            );
+            println!("Neither {:?} nor {:?} exit.", rel_to_cwd_path, rel_to_exe_path);
             std::process::exit(1)
         }
     };
@@ -152,7 +149,6 @@ fn download_tsv(url: &str) -> Result<(&str, usize), Box<dyn std::error::Error>> 
     Ok((filename, bytes.len()))
 }
 
-
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -186,7 +182,6 @@ struct Args {
     #[arg(long, default_value_t = 0.05)]
     vol_m201: f32,
 }
-
 
 fn main() {
     let args = Args::parse();
@@ -340,14 +335,17 @@ fn main() {
             duration_secs,
             volume
         );
-        let recv =
-            queue.append_with_signal(source.clone().amplify(volume).take_duration_with_fade(
+        let recv = queue.append_with_signal(
+            source.clone().amplify(volume).take_duration_with_fade(
                 Duration::from_secs(duration_secs),
                 Duration::from_millis(fade_millis),
-            ));
+            ),
+        );
         let start = Local::now();
         let finished = start
-            .checked_add_signed(chrono::Duration::seconds(duration_secs.try_into().unwrap()))
+            .checked_add_signed(chrono::Duration::seconds(
+                duration_secs.try_into().unwrap(),
+            ))
             .unwrap();
         let key = log.to_string();
         now_playing.insert(key.clone(), StartEnd::new(start, finished));
@@ -378,27 +376,37 @@ fn main() {
 
     let play_m1 = {
         let np = now_playing.clone();
-        move |secs: u64| play_repeat("M1", &source_m1, &tx_m1, secs, 100, args.vol_m1, &np)
+        move |secs: u64| {
+            play_repeat("M1", &source_m1, &tx_m1, secs, 100, args.vol_m1, &np)
+        }
     };
 
     let play_m2 = {
         let np = now_playing.clone();
-        move |secs: u64| play_repeat("M2", &source_m2, &tx_m2, secs, 100, args.vol_m2, &np)
+        move |secs: u64| {
+            play_repeat("M2", &source_m2, &tx_m2, secs, 100, args.vol_m2, &np)
+        }
     };
 
     let play_m3 = {
         let np = now_playing.clone();
-        move |secs: u64| play_repeat("M3", &source_m3, &tx_m3, secs, 100, args.vol_m3, &np)
+        move |secs: u64| {
+            play_repeat("M3", &source_m3, &tx_m3, secs, 100, args.vol_m3, &np)
+        }
     };
 
     let play_m35 = {
         let np = now_playing.clone();
-        move |secs: u64| play_repeat("M35", &source_m35, &tx_m35, secs, 500, args.vol_m35, &np)
+        move |secs: u64| {
+            play_repeat("M35", &source_m35, &tx_m35, secs, 500, args.vol_m35, &np)
+        }
     };
 
     let play_m75 = {
         let np = now_playing.clone();
-        move |secs: u64| play_repeat("M75", &source_m75, &tx_m75, secs, 500, args.vol_m75, &np)
+        move |secs: u64| {
+            play_repeat("M75", &source_m75, &tx_m75, secs, 500, args.vol_m75, &np)
+        }
     };
 
     // Mit fadein?
@@ -423,12 +431,16 @@ fn main() {
 
     let play_m200 = {
         let np = now_playing.clone();
-        move |secs: u64| play_once("M200.00", &tria_200, &tx_m200, secs, 500, args.vol_m200, &np)
+        move |secs: u64| {
+            play_once("M200.00", &tria_200, &tx_m200, secs, 500, args.vol_m200, &np)
+        }
     };
 
     let play_m201 = {
         let np = now_playing.clone();
-        move |secs: u64| play_once("M201.00", &tria_201, &tx_m201, secs, 500, args.vol_m201, &np)
+        move |secs: u64| {
+            play_once("M201.00", &tria_201, &tx_m201, secs, 500, args.vol_m201, &np)
+        }
     };
 
     if args.log_sample_aplitudes {
