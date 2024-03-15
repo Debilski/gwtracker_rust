@@ -171,7 +171,7 @@ fn read_gracedbevent(
         .error_for_status()?;
 
     let json = res.text()?;
-    println!("Parsing this json: {}", &json);
+    println!("Parsing json: {}…", &json[0..60]);
 
     let conv = serde_json::from_str(&json)?;
     println!("{:?}", conv);
@@ -276,7 +276,7 @@ pub fn read_gracedb(last_n: usize) -> Result<Vec<GraceDbEvent>, Box<dyn std::err
     //let content = res;
     let text = res.text()?;
 
-    println!("Parsing this json: {}", &text);
+    println!("Parsing json: {}…", &text[0..60]);
 
     let gw: GraceDbList = serde_json::from_str(&text)?;
     for event in gw.superevents.iter().take(last_n) {
