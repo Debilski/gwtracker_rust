@@ -259,7 +259,12 @@ fn main() {
         read_gracedb(3).map(|evts| evts.iter().map(datafetch::gracedb_to_gwevent).collect())
     });
 
-    println!("{gw_events:?}");
+    if let Ok(evs) = gw_events {
+        for ev in evs.iter() {
+            println!("{}", ev);
+        }
+    }
+    
 
     let source_m1 = source("sounds/M-1ab_130.mp3").buffered().repeat_infinite();
     let source_m2 = source("sounds/M-2ab_140.mp3").buffered().repeat_infinite();
