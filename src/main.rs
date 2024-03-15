@@ -21,7 +21,7 @@ use rodio::queue::{queue, SourcesQueueInput};
 use rodio::source::Source;
 use rodio::{dynamic_mixer, Decoder, OutputStream, Sample, Sink};
 
-use crate::datafetch::{read_gracedb, read_tsv, GWData};
+use crate::datafetch::read_gracedb;
 use crate::take_with_fade::TakeWithFade;
 
 type SourceOnce = Decoder<BufReader<File>>;
