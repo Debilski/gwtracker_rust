@@ -1,11 +1,16 @@
-use std::fs::File;
-use std::{collections::HashMap, error::Error};
+use std::collections::HashMap;
+use std::error::Error;
+use std::fs::{self, File};
+use std::io::{self, Read};
+use std::path::Path;
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
 use csv::ReaderBuilder;
-use reqwest::header::ACCEPT;
-use reqwest::Client;
-use serde::{Deserialize, Deserializer};
+use fitrs::Fits;
+use fitrs::HeaderValue::{CharacterString, RealFloatingNumber};
+use reqwest::blocking::Client;
+use reqwest::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
+use serde::{Deserialize, Deserializer, Serialize};
 
 // (0)GW event, Detection time, Location area, Luminosity distance,
 // (4)Detector, False Alarm Rate, False Alarm chance in O4,
@@ -21,23 +26,27 @@ pub struct GraceDbList {
 #[derive(Debug, Deserialize, Clone)]
 pub struct GraceDbListEvent {
     superevent_id: String,
-    created: String,
+
+    #[serde(with = "gracedb_date")]
+    created: DateTime<Utc>,
     far: f64,
     links: HashMap<String, String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GraceDbEvent {
     superevent_id: String,
     alert_type: String,
-    time_created: String,
+    #[serde(with = "gracedb_date")]
+    time_created: DateTime<Utc>,
     event: GraceDbEventData,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GraceDbEventData {
     significant: bool,
-    time: String,
+    #[serde(with = "gracedb_date")]
+    time: DateTime<Utc>,
     far: f64,
     instruments: Vec<String>,
     group: String,
@@ -47,19 +56,89 @@ pub struct GraceDbEventData {
     classification: GraceDbEventClassification,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GraceDbEventProperties {
-    HasNS: f64,
-    HasRemnant: f64,
-    HasMassGap: f64,
+    #[serde(rename = "HasNS")]
+    has_ns: f64,
+    #[serde(rename = "HasRemnant")]
+    has_remnant: f64,
+    #[serde(rename = "HasMassGap")]
+    has_mass_gap: f64,
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GraceDbEventClassification {
-    BBH: f64,
-    BNS: f64,
-    NSBH: f64,
-    Terrestrial: f64,
+    #[serde(rename = "BBH")]
+    bbh: f64,
+    #[serde(rename = "BNS")]
+    bns: f64,
+    #[serde(rename = "NSBH")]
+    ns_bh: f64,
+    #[serde(rename = "Terrestrial")]
+    terrestrial: f64,
+}
+
+mod gracedb_date {
+    use chrono::{DateTime, NaiveDateTime, Utc};
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    // Events have one of these formats
+    const FORMAT_A: &'static str = "%+"; // matches %Y-%m-%dT%H:%M:%SZ";
+    const FORMAT_B: &'static str = "%Y-%m-%d %H:%M:%S %Z";
+
+    pub fn serialize<S>(date: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let s = format!("{}", date.format(FORMAT_A));
+        serializer.serialize_str(&s)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<DateTime<Utc>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        let dt = NaiveDateTime::parse_from_str(&s, FORMAT_A)
+            .or_else(|_| NaiveDateTime::parse_from_str(&s, FORMAT_B))
+            .map_err(serde::de::Error::custom)?;
+
+        Ok(DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct GWEvent {
+    id: String,
+
+    #[serde(with = "gracedb_date")]
+    time: DateTime<Utc>,
+
+    location_area: u64,
+    distance: u64,
+    detectors: Vec<String>,
+    ns_ns: f64,
+    ns_bh: f64,
+    bh_bh: f64,
+    terrestrial: f64,
+    mass_gap: f64,
+}
+
+pub type GWEventVec = Vec<GWEvent>;
+
+pub fn gracedb_to_gwevent(gracedb_event: &GraceDbEvent) -> GWEvent {
+    GWEvent {
+        id: gracedb_event.superevent_id.clone(),
+        time: gracedb_event.event.time,
+        location_area: 0, // TODO
+        distance: 0,      // TODO
+        detectors: gracedb_event.event.instruments.clone(),
+        ns_ns: gracedb_event.event.classification.bns,
+        ns_bh: gracedb_event.event.classification.ns_bh,
+        bh_bh: gracedb_event.event.classification.bbh,
+        terrestrial: gracedb_event.event.classification.terrestrial,
+        mass_gap: 0.0, // TODO
+    }
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -123,10 +202,7 @@ where
 
 pub fn read_tsv(file_path: &str) -> Result<Vec<GWData>, Box<dyn Error>> {
     let file = File::open(file_path)?;
-    let mut tsv_reader = ReaderBuilder::new()
-        .has_headers(true)
-        .delimiter(b'\t')
-        .from_reader(file);
+    let mut tsv_reader = ReaderBuilder::new().has_headers(true).delimiter(b'\t').from_reader(file);
 
     let mut results: Vec<GWData> = Vec::new();
 
@@ -142,8 +218,6 @@ fn read_gracedbevent(
     url: &String,
     client: &reqwest::blocking::Client,
 ) -> Result<GraceDbEvent, Box<dyn std::error::Error>> {
-    use reqwest::header::{CONTENT_TYPE, USER_AGENT};
-
     let res = client
         .get(url)
         .header(USER_AGENT, "gwrust")
@@ -152,9 +226,49 @@ fn read_gracedbevent(
         .error_for_status()?;
 
     let json = res.text()?;
+    println!("Parsing this json: {}", &json);
 
     let conv = serde_json::from_str(&json)?;
+    println!("{:?}", conv);
     Ok(conv)
+}
+
+fn download_fits(
+    file_path: &String,
+    url: &String,
+    client: &reqwest::blocking::Client,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let cache_folder = Path::new(CACHE_FOLDER);
+
+    let _ = fs::create_dir(cache_folder); // ignore if cache already exists or otherwise fails
+
+    let file_path = cache_folder.join(file_path);
+    let metadata = std::fs::metadata(&file_path);
+
+    if metadata.is_ok() {
+        println!("File {:?} exists. Not downloading.", &file_path);
+        return Ok(());
+    }
+
+    let res = client.get(url).header(USER_AGENT, "gwrust").send()?.error_for_status()?;
+
+    let n_bytes = res.content_length().unwrap_or(0);
+
+    let mut file = std::fs::File::create(&file_path)?;
+    let mut content = std::io::Cursor::new(res.bytes()?);
+
+    println!("Writing {n_bytes} to {:?}.", &file_path);
+    std::io::copy(&mut content, &mut file);
+    Ok(())
+}
+
+fn dump_gracedbevent(event: &GraceDbEvent) {
+    let str = serde_json::to_string(event).unwrap();
+    println!("");
+    println!("");
+    println!("");
+    println!("{}", str);
+    println!("");
 }
 
 #[derive(Debug, Clone)]
@@ -164,10 +278,9 @@ struct FitsParams {
     instruments: Vec<String>,
 }
 
-fn read_fits(filename: &str) -> Result<FitsParams, Box<dyn std::error::Error>> {
-    use fitrs::Fits;
-    use fitrs::HeaderValue::{CharacterString, RealFloatingNumber};
+const CACHE_FOLDER: &str = "cache";
 
+fn read_fits(filename: &str) -> Result<FitsParams, Box<dyn std::error::Error>> {
     let fits = Fits::open(filename).expect("Failed to open");
 
     let mut dist_mean = 0.0;
@@ -199,14 +312,13 @@ fn read_fits(filename: &str) -> Result<FitsParams, Box<dyn std::error::Error>> {
     Ok(FitsParams { dist_mean, dist_std, instruments })
 }
 
-pub fn read_gracedb() -> Result<(), Box<dyn std::error::Error>> {
-    use reqwest::blocking::Client;
-    use reqwest::header::{CONTENT_TYPE, USER_AGENT};
-
+// blocking IO
+pub fn read_gracedb(last_n: usize) -> Result<Vec<GraceDbEvent>, Box<dyn std::error::Error>> {
     // read fits file
-    println!("{:?}", read_fits("bayestar.fits"));
+    //    println!("{:?}", read_fits("S240109a-bayestar.multiorder.fits"));
 
     let client = Client::new();
+    let mut result: Vec<GraceDbEvent> = Vec::new();
 
     let url = "https://gracedb.ligo.org/apiweb/superevents/";
     let res = client
@@ -218,12 +330,11 @@ pub fn read_gracedb() -> Result<(), Box<dyn std::error::Error>> {
         .error_for_status()?;
     //let content = res;
     let text = res.text()?;
-    println!("Out: {text:?}");
 
-    println!("");
+    println!("Parsing this json: {}", &text);
 
     let gw: GraceDbList = serde_json::from_str(&text)?;
-    for event in gw.superevents {
+    for event in gw.superevents.iter().take(last_n) {
         println!("{event:?}");
 
         if let Some(files) = event.links.get("files") {
@@ -233,22 +344,29 @@ pub fn read_gracedb() -> Result<(), Box<dyn std::error::Error>> {
                 .header(ACCEPT, "application/json")
                 .send()?
                 .error_for_status()?;
-            //let content = res;
+
             let text = res.text()?;
             let files_map: HashMap<String, String> = serde_json::from_str(&text)?;
             for f in files_map.keys() {
                 if f.contains("update.json") {
                     let name = files_map.get(f);
-                    if let Some(name) = name {
-                        let eventdata = read_gracedbevent(name, &client)?;
-                        println!("Eventdata: {eventdata:?}");
+                    if let Some(url) = name {
+                        let eventdata = read_gracedbevent(url, &client)?;
+                        result.push(eventdata);
                     }
-                    println!("{name:?}");
+                }
+
+                if f == "bayestar.multiorder.fits" {
+                    println!("fits file: {f}");
+                    let name = files_map.get(f);
+                    if let Some(url) = name {
+                        let gen_name = format!("{}-{}", event.superevent_id, f);
+                        download_fits(&gen_name, url, &client);
+                    }
                 }
             }
-            //println!("Out: {files_map:?}");
         }
     }
 
-    Ok(())
+    Ok(result)
 }

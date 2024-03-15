@@ -1,4 +1,5 @@
-use std::{fmt::Debug, time::Duration};
+use std::fmt::Debug;
+use std::time::Duration;
 
 use rodio::{Sample, Source};
 
