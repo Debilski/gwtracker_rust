@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs::{self, File};
 use std::io::{self, Read};
-use std::path::Path;
+use std::path::{Display, Path};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use csv::ReaderBuilder;
@@ -122,6 +122,24 @@ pub struct GWEvent {
     bh_bh: f64,
     terrestrial: f64,
     mass_gap: f64,
+}
+
+impl std::fmt::Display for GWEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Event: id={:<10} {:<8} time={} area={} dist={} ns_ns={:.3} ns_bh={:.3} bh_bh={:.3} terr={:.3} mass_gap={:.3}",
+            self.id,
+            self.detectors.join(","),
+            self.time,
+            self.location_area,
+            self.distance,
+            self.ns_ns,
+            self.ns_bh,
+            self.bh_bh,
+            self.terrestrial,
+            self.mass_gap
+    
+        )
+    }
 }
 
 pub type GWEventVec = Vec<GWEvent>;
