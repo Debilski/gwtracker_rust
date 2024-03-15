@@ -3,11 +3,7 @@ use std::time::Duration;
 use rodio::{Sample, Source};
 
 /// Internal function that builds a `TakeDuration` object.
-pub fn take_with_fade<I>(
-    input: I,
-    duration: Duration,
-    fade_duration: Duration,
-) -> TakeWithFade<I>
+pub fn take_with_fade<I>(input: I, duration: Duration, fade_duration: Duration) -> TakeWithFade<I>
 where
     I: Source,
     I::Item: Sample,
@@ -42,10 +38,9 @@ impl DurationFilter {
             FadeOut => {
                 let fade_duration = parent.fade_duration.as_millis() as f32;
                 let remaining = parent.remaining_duration.as_millis() as f32;
-                let total = parent.requested_duration.as_millis() as f32;
+                let _total = parent.requested_duration.as_millis() as f32;
 
-                let divisor =
-                    if remaining <= fade_duration { fade_duration } else { remaining };
+                let divisor = if remaining <= fade_duration { fade_duration } else { remaining };
                 sample.amplify(remaining / divisor)
             }
         }

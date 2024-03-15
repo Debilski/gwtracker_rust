@@ -4,27 +4,24 @@ mod take_with_fade;
 
 use std::fmt::Debug;
 use std::fs::{self, File};
-use std::io::{BufReader, Write};
+use std::io::{BufReader, BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use chrono::{DateTime, Local};
-
+use clap::builder::TryMapValueParser;
 use clap::Parser;
+use colored::Colorize;
 use dashmap::DashMap;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rand::Rng;
 use rodio::queue::{queue, SourcesQueueInput};
 use rodio::source::Source;
 use rodio::{dynamic_mixer, Decoder, OutputStream, Sample, Sink};
 
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-
-use colored::Colorize;
-
-use crate::datafetch::GWData;
-use crate::datafetch::{read_gracedb, read_tsv};
+use crate::datafetch::{read_gracedb, read_tsv, GWData};
 use crate::take_with_fade::TakeWithFade;
 
 type SourceOnce = Decoder<BufReader<File>>;
@@ -54,10 +51,7 @@ fn source(str: &str) -> SourceOnce {
     println!("Opening {:?}", path);
     let file = File::open(path.clone()).unwrap();
 
-    let data = Decoder::new(BufReader::new(file))
-        .unwrap()
-        .convert_samples()
-        .buffered();
+    let data = Decoder::new(BufReader::new(file)).unwrap().convert_samples().buffered();
     let max: Option<f32> = data.clone().max_by(|x: &f32, y: &f32| x.total_cmp(y));
     println!("Max amplitude: {:?}", max.unwrap());
 
@@ -105,6 +99,8 @@ M75 / M35
 
 */
 
+const EVENTS_CACHE: &str = "Events.json";
+
 trait SourceExt {
     #[inline]
     fn take_duration_with_fade(
@@ -125,11 +121,8 @@ impl<Source> SourceExt for Source {}
 
 fn sty(title: &str) -> ProgressStyle {
     ProgressStyle::with_template(
-        format!(
-            "{{spinner}} [{:3}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} {{msg}}",
-            title
-        )
-        .as_str(),
+        format!("{{spinner}} [{:3}] {{bar:40.cyan/blue}} {{pos:>7}}/{{len:7}} {{msg}}", title)
+            .as_str(),
     )
     .unwrap()
     //.progress_chars("##-")
@@ -183,32 +176,90 @@ struct Args {
     vol_m201: f32,
 }
 
+fn is_cache_valid(file_path: &str, duration: Duration) -> Result<bool, Box<dyn std::error::Error>> {
+    match fs::metadata(file_path) {
+        Ok(metadata) => {
+            let modified_time = metadata.modified()?;
+            let current_time = std::time::SystemTime::now();
+
+            let fail = std::io::Error::new(std::io::ErrorKind::Other, "Failed to determine file age.").into();
+
+            current_time.duration_since(modified_time)
+                .map(|elapsed| {elapsed < duration})
+                .map_err(|err| { fail })
+
+        }
+        // if fs::metadata errs then there is no file, hence no cache
+        Err(_) => Ok(false),
+    }
+}
+
+fn read_cache(path: &str) -> Result<datafetch::GWEventVec, Box<dyn std::error::Error>> {
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let e = serde_json::from_reader(reader)?;
+    Ok(e)
+}
+
+fn write_to_cache(path: &str, event: &datafetch::GWEventVec) -> Result<(), Box<dyn std::error::Error>> {
+    let file = File::create(path)?;
+    let writer = BufWriter::new(file);
+    serde_json::to_writer(writer, event)?;
+    Ok(())
+}
+
+
+fn renew_cache<F>(
+    path: &str,
+    f: F,
+) -> Result<datafetch::GWEventVec, Box<dyn std::error::Error>>
+where
+    F: FnOnce() -> Result<datafetch::GWEventVec, Box<dyn std::error::Error>>,
+{
+    let data = f()?;
+    write_to_cache(path, &data)?;
+    Ok(data)
+}
+
+fn read_or_renew_cache<F>(
+    path: &str,
+    duration: Duration,
+    f: F,
+) -> Result<datafetch::GWEventVec, Box<dyn std::error::Error>>
+where
+    F: FnOnce() -> Result<datafetch::GWEventVec, Box<dyn std::error::Error>>,
+{
+    let cached_val = read_cache(path);
+
+    match is_cache_valid(path, duration) {
+        Ok(true) => {
+            let res = read_cache(path)
+                .or_else(|err| {
+                println!("Warning: Could not get result from cache: {err}. Trying to fetch again");
+                renew_cache(path, f)
+            });
+            res
+        }
+        _ => {
+            // TODO: If f fails, see that we still get the cached version!
+
+            renew_cache(path, f)
+        }
+    }
+}
+
 fn main() {
     let args = Args::parse();
 
     println!("==== {} ====", "GWrust".blue());
 
-    let res = read_gracedb();
-    println!("{res:?}");
+    let ten_minutes = Duration::from_secs(600);
 
-    let mut last_3_events: Vec<GWData> = Vec::new();
+    let gw_events = read_or_renew_cache(EVENTS_CACHE, ten_minutes, || {
+        read_gracedb(3).map(|evts| evts.iter().map(datafetch::gracedb_to_gwevent).collect())
+    });
 
-    let tsv_url =
-        "https://raw.githubusercontent.com/Debilski/gwtracker_rust/main/O4_Events.tsv";
-
-    let res = download_tsv(tsv_url);
-    println!("Download status: {:?}", res);
-    if let Ok((filename, _size)) = res {
-        let elems = read_tsv(filename);
-
-        if let Ok(el) = elems {
-            println!("Last 3 events:");
-
-            last_3_events = el[el.len() - 3..el.len()].to_vec();
-        }
-    }
-
-    last_3_events.iter().for_each(|ev| println!("{ev:?}"));
+    println!("{gw_events:?}");
 
     let source_m1 = source("sounds/M-1ab_130.mp3").buffered().repeat_infinite();
     let source_m2 = source("sounds/M-2ab_140.mp3").buffered().repeat_infinite();
@@ -216,18 +267,10 @@ fn main() {
     let source_m35 = source("sounds/M35-perma.mp3").buffered().repeat_infinite();
     let source_m75 = source("sounds/M75-perma.mp3").buffered().repeat_infinite();
 
-    let tria_44_00 = source("sounds/Triangle_44,00-50-loop.mp3")
-        .buffered()
-        .repeat_infinite();
-    let tria_44_22 = source("sounds/Triangle_44,22-ca70-loop.mp3")
-        .buffered()
-        .repeat_infinite();
-    let tria_44_23 = source("sounds/Triangle_44,23-100-loop.mp3")
-        .buffered()
-        .repeat_infinite();
-    let tria_44_25 = source("sounds/Triangle_44,25-ca85-loop.mp3")
-        .buffered()
-        .repeat_infinite();
+    let tria_44_00 = source("sounds/Triangle_44,00-50-loop.mp3").buffered().repeat_infinite();
+    let tria_44_22 = source("sounds/Triangle_44,22-ca70-loop.mp3").buffered().repeat_infinite();
+    let tria_44_23 = source("sounds/Triangle_44,23-100-loop.mp3").buffered().repeat_infinite();
+    let tria_44_25 = source("sounds/Triangle_44,25-ca85-loop.mp3").buffered().repeat_infinite();
     let tria_200 = source("sounds/Triangle_200-ca70 10sec oh.mp3").buffered();
     let tria_201 = source("sounds/Triangle_201_ca30 10sec oh.mp3").buffered();
     let tria_202 = source("sounds/Triangle_202_ca20 2 sec oh.mp3").buffered();
@@ -329,23 +372,15 @@ fn main() {
         S::Item: Sample,
         Smpl: Sample + Send + 'static,
     {
-        println!(
-            "Playing {} for {} seconds. (Vol: {})",
-            log.red(),
-            duration_secs,
-            volume
-        );
-        let recv = queue.append_with_signal(
-            source.clone().amplify(volume).take_duration_with_fade(
+        println!("Playing {} for {} seconds. (Vol: {})", log.red(), duration_secs, volume);
+        let recv =
+            queue.append_with_signal(source.clone().amplify(volume).take_duration_with_fade(
                 Duration::from_secs(duration_secs),
                 Duration::from_millis(fade_millis),
-            ),
-        );
+            ));
         let start = Local::now();
         let finished = start
-            .checked_add_signed(chrono::Duration::seconds(
-                duration_secs.try_into().unwrap(),
-            ))
+            .checked_add_signed(chrono::Duration::seconds(duration_secs.try_into().unwrap()))
             .unwrap();
         let key = log.to_string();
         now_playing.insert(key.clone(), StartEnd::new(start, finished));
@@ -376,37 +411,27 @@ fn main() {
 
     let play_m1 = {
         let np = now_playing.clone();
-        move |secs: u64| {
-            play_repeat("M1", &source_m1, &tx_m1, secs, 100, args.vol_m1, &np)
-        }
+        move |secs: u64| play_repeat("M1", &source_m1, &tx_m1, secs, 100, args.vol_m1, &np)
     };
 
     let play_m2 = {
         let np = now_playing.clone();
-        move |secs: u64| {
-            play_repeat("M2", &source_m2, &tx_m2, secs, 100, args.vol_m2, &np)
-        }
+        move |secs: u64| play_repeat("M2", &source_m2, &tx_m2, secs, 100, args.vol_m2, &np)
     };
 
     let play_m3 = {
         let np = now_playing.clone();
-        move |secs: u64| {
-            play_repeat("M3", &source_m3, &tx_m3, secs, 100, args.vol_m3, &np)
-        }
+        move |secs: u64| play_repeat("M3", &source_m3, &tx_m3, secs, 100, args.vol_m3, &np)
     };
 
     let play_m35 = {
         let np = now_playing.clone();
-        move |secs: u64| {
-            play_repeat("M35", &source_m35, &tx_m35, secs, 500, args.vol_m35, &np)
-        }
+        move |secs: u64| play_repeat("M35", &source_m35, &tx_m35, secs, 500, args.vol_m35, &np)
     };
 
     let play_m75 = {
         let np = now_playing.clone();
-        move |secs: u64| {
-            play_repeat("M75", &source_m75, &tx_m75, secs, 500, args.vol_m75, &np)
-        }
+        move |secs: u64| play_repeat("M75", &source_m75, &tx_m75, secs, 500, args.vol_m75, &np)
     };
 
     // Mit fadein?
@@ -431,16 +456,12 @@ fn main() {
 
     let play_m200 = {
         let np = now_playing.clone();
-        move |secs: u64| {
-            play_once("M200.00", &tria_200, &tx_m200, secs, 500, args.vol_m200, &np)
-        }
+        move |secs: u64| play_once("M200.00", &tria_200, &tx_m200, secs, 500, args.vol_m200, &np)
     };
 
     let play_m201 = {
         let np = now_playing.clone();
-        move |secs: u64| {
-            play_once("M201.00", &tria_201, &tx_m201, secs, 500, args.vol_m201, &np)
-        }
+        move |secs: u64| play_once("M201.00", &tria_201, &tx_m201, secs, 500, args.vol_m201, &np)
     };
 
     if args.log_sample_aplitudes {
