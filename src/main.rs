@@ -4,14 +4,13 @@ mod take_with_fade;
 
 use std::fmt::Debug;
 use std::fs::{self, File};
-use std::io::{BufReader, BufWriter, Write};
+use std::io::{BufReader, BufWriter};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
 use chrono::{DateTime, Local};
-use clap::builder::TryMapValueParser;
 use clap::Parser;
 use colored::Colorize;
 use dashmap::DashMap;
@@ -25,9 +24,6 @@ use crate::datafetch::read_gracedb;
 use crate::take_with_fade::TakeWithFade;
 
 type SourceOnce = Decoder<BufReader<File>>;
-type SourceOnceBuffered = rodio::source::Buffered<SourceOnce>;
-type SourceInfinite = rodio::source::Repeat<SourceOnce>;
-type SourceInfiniteBuffered = rodio::source::Repeat<SourceOnceBuffered>;
 
 const GIT_VERSION: &str = git_version::git_version!();
 
@@ -130,20 +126,6 @@ fn sty(title: &str) -> ProgressStyle {
     //.progress_chars("##-")
 }
 
-fn download_tsv(url: &str) -> Result<(&str, usize), Box<dyn std::error::Error>> {
-    let filename = "O4_Events_cache.tsv";
-    let file_temp = format!(".{filename}.tmp");
-
-    let content = reqwest::blocking::get(url)?.error_for_status()?;
-    let text = content.text()?;
-    let mut f = File::create(&file_temp)?;
-    let bytes = text.as_bytes();
-    f.write_all(bytes)?;
-
-    fs::rename(file_temp, filename)?;
-    Ok((filename, bytes.len()))
-}
-
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -187,12 +169,14 @@ fn is_cache_valid(file_path: &str, duration: Duration) -> Result<bool, Box<dyn s
             let modified_time = metadata.modified()?;
             let current_time = std::time::SystemTime::now();
 
-            let fail = std::io::Error::new(std::io::ErrorKind::Other, "Failed to determine file age.").into();
+            let fail =
+                std::io::Error::new(std::io::ErrorKind::Other, "Failed to determine file age.")
+                    .into();
 
-            current_time.duration_since(modified_time)
-                .map(|elapsed| {elapsed < duration})
-                .map_err(|err| { fail })
-
+            current_time
+                .duration_since(modified_time)
+                .map(|elapsed| elapsed < duration)
+                .map_err(|_err| fail)
         }
         // if fs::metadata errs then there is no file, hence no cache
         Err(_) => Ok(false),
@@ -206,18 +190,17 @@ fn read_cache(path: &str) -> Result<datafetch::GWEventVec, Box<dyn std::error::E
     Ok(e)
 }
 
-fn write_to_cache(path: &str, event: &datafetch::GWEventVec) -> Result<(), Box<dyn std::error::Error>> {
+fn write_to_cache(
+    path: &str,
+    event: &datafetch::GWEventVec,
+) -> Result<(), Box<dyn std::error::Error>> {
     let file = File::create(path)?;
     let writer = BufWriter::new(file);
     serde_json::to_writer(writer, event)?;
     Ok(())
 }
 
-
-fn renew_cache<F>(
-    path: &str,
-    f: F,
-) -> Result<datafetch::GWEventVec, Box<dyn std::error::Error>>
+fn renew_cache<F>(path: &str, f: F) -> Result<datafetch::GWEventVec, Box<dyn std::error::Error>>
 where
     F: FnOnce() -> Result<datafetch::GWEventVec, Box<dyn std::error::Error>>,
 {
@@ -238,8 +221,7 @@ where
 
     match is_cache_valid(path, duration) {
         Ok(true) => {
-            let res = read_cache(path)
-                .or_else(|err| {
+            let res = cached_val.or_else(|err| {
                 println!("Warning: Could not get result from cache: {err}. Trying to fetch again");
                 renew_cache(path, f)
             });
@@ -263,9 +245,7 @@ fn main() {
     let gw_events = if args.offline {
         read_cache(EVENTS_CACHE)
     } else {
-        read_or_renew_cache(EVENTS_CACHE, ten_minutes, || {
-            read_gracedb(3)
-        })
+        read_or_renew_cache(EVENTS_CACHE, ten_minutes, || read_gracedb(3))
     };
 
     println!("{gw_events:?}");
@@ -395,14 +375,16 @@ fn main() {
                 Duration::from_millis(fade_millis),
             ));
         let start = Local::now();
-        let finished = start
-            .checked_add_signed(chrono::Duration::seconds(duration_secs.try_into().unwrap()))
-            .unwrap();
+        let duration = { duration_secs.try_into().map(chrono::Duration::try_seconds) }
+            .ok()
+            .flatten()
+            .unwrap_or(chrono::Duration::zero());
+        let finished = start.checked_add_signed(duration).unwrap();
         let key = log.to_string();
         now_playing.insert(key.clone(), StartEnd::new(start, finished));
         let np = now_playing.clone();
         thread::spawn(move || {
-            recv.recv();
+            let _ = recv.recv();
             np.remove(&key);
             println!("Stopped {}.", &key);
         });

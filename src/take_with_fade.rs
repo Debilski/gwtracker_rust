@@ -63,6 +63,7 @@ pub struct TakeWithFade<I> {
     duration_per_sample: Duration,
 }
 
+#[allow(dead_code)]
 impl<I> TakeWithFade<I>
 where
     I: Source,
