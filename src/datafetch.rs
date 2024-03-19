@@ -2,20 +2,16 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs::{self, File};
 use std::io::{self, Read};
-use std::path::{Display, Path};
+use std::path::{Display, Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, Utc};
 use csv::ReaderBuilder;
-use fitrs::Fits;
+use fitrs::{Fits, FitsData};
 use fitrs::HeaderValue::{CharacterString, RealFloatingNumber};
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
 use serde::{Deserialize, Deserializer, Serialize};
 
-// (0)GW event, Detection time, Location area, Luminosity distance,
-// (4)Detector, False Alarm Rate, False Alarm chance in O4,
-// (7) NS / NS, NS / BH, BH / BH, Mass gap, Terrestrial,
-// (12) Notes, Ref
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct GraceDbList {
@@ -144,12 +140,12 @@ impl std::fmt::Display for GWEvent {
 
 pub type GWEventVec = Vec<GWEvent>;
 
-pub fn gracedb_to_gwevent(gracedb_event: &GraceDbEvent) -> GWEvent {
+pub fn gracedb_to_gwevent(gracedb_event: GraceDbEvent, fits_data: Option<FitsParams>) -> GWEvent {
     GWEvent {
         id: gracedb_event.superevent_id.clone(),
         time: gracedb_event.event.time,
         location_area: 0, // TODO
-        distance: 0,      // TODO
+        distance: fits_data.map_or(0, |d| d.dist_mean as u64),
         detectors: gracedb_event.event.instruments.clone(),
         ns_ns: gracedb_event.event.classification.bns,
         ns_bh: gracedb_event.event.classification.ns_bh,
@@ -182,7 +178,7 @@ fn download_fits(
     file_path: &String,
     url: &String,
     client: &reqwest::blocking::Client,
-) -> Result<(), Box<dyn std::error::Error>> {
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let cache_folder = Path::new(CACHE_FOLDER);
 
     let _ = fs::create_dir(cache_folder); // ignore if cache already exists or otherwise fails
@@ -192,7 +188,7 @@ fn download_fits(
 
     if metadata.is_ok() {
         println!("File {:?} exists. Not downloading.", &file_path);
-        return Ok(());
+        return Ok(file_path);
     }
 
     let res = client.get(url).header(USER_AGENT, "gwrust").send()?.error_for_status()?;
@@ -203,18 +199,10 @@ fn download_fits(
     let mut content = std::io::Cursor::new(res.bytes()?);
 
     println!("Writing {n_bytes} to {:?}.", &file_path);
-    std::io::copy(&mut content, &mut file);
-    Ok(())
+    std::io::copy(&mut content, &mut file)?;
+    Ok(file_path)
 }
 
-fn dump_gracedbevent(event: &GraceDbEvent) {
-    let str = serde_json::to_string(event).unwrap();
-    println!("");
-    println!("");
-    println!("");
-    println!("{}", str);
-    println!("");
-}
 
 #[derive(Debug, Clone)]
 struct FitsParams {
@@ -225,7 +213,7 @@ struct FitsParams {
 
 const CACHE_FOLDER: &str = "cache";
 
-fn read_fits(filename: &str) -> Result<FitsParams, Box<dyn std::error::Error>> {
+fn read_fits(filename: &Path) -> Result<FitsParams, Box<dyn std::error::Error>> {
     let fits = Fits::open(filename).expect("Failed to open");
 
     let mut dist_mean = 0.0;
@@ -258,12 +246,10 @@ fn read_fits(filename: &str) -> Result<FitsParams, Box<dyn std::error::Error>> {
 }
 
 // blocking IO
-pub fn read_gracedb(last_n: usize) -> Result<Vec<GraceDbEvent>, Box<dyn std::error::Error>> {
-    // read fits file
-    //    println!("{:?}", read_fits("S240109a-bayestar.multiorder.fits"));
+pub fn read_gracedb(last_n: usize) -> Result<Vec<GWEvent>, Box<dyn std::error::Error>> {
 
     let client = Client::new();
-    let mut result: Vec<GraceDbEvent> = Vec::new();
+    let mut result: Vec<GWEvent> = Vec::new();
 
     let url = "https://gracedb.ligo.org/apiweb/superevents/";
     let res = client
@@ -292,24 +278,34 @@ pub fn read_gracedb(last_n: usize) -> Result<Vec<GraceDbEvent>, Box<dyn std::err
 
             let text = res.text()?;
             let files_map: HashMap<String, String> = serde_json::from_str(&text)?;
-            for f in files_map.keys() {
-                if f.contains("update.json") {
-                    let name = files_map.get(f);
-                    if let Some(url) = name {
-                        let eventdata = read_gracedbevent(url, &client)?;
-                        result.push(eventdata);
-                    }
-                }
 
-                if f == "bayestar.multiorder.fits" {
-                    println!("fits file: {f}");
-                    let name = files_map.get(f);
-                    if let Some(url) = name {
-                        let gen_name = format!("{}-{}", event.superevent_id, f);
-                        download_fits(&gen_name, url, &client);
-                    }
+            // We are interested in the files update.json, which containes all
+            // the obvious metadata for a _confirmed_ event.
+            // For sky analysis, we need to look at the file bayestar.mulitorder.fits,
+            // which contains the distance and instruments etc.
+
+            let update_json = format!("{}-update.json", event.superevent_id);
+
+            if let Some(url) = files_map.get(&update_json) {
+                let eventdata = read_gracedbevent(url, &client)?;
+                
+                let mut fits_data = None;
+                if let Some(url) = files_map.get("bayestar.multiorder.fits") {
+                    let gen_name = format!("{}-{}", event.superevent_id, "bayestar.multiorder.fits");
+                    let file_path = download_fits(&gen_name, url, &client)?;
+
+                    fits_data = read_fits(&file_path).ok();
+                } else {
+                    println!("No fits file bayestar.multiorder.fits found. Skipping.")
                 }
+                
+                let gwevent = gracedb_to_gwevent(eventdata, fits_data);
+                result.push(gwevent);
+
+            } else {
+                println!("Warning: No file {} found for event {}", update_json, event.superevent_id);
             }
+
         }
     }
 
