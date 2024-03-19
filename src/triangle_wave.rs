@@ -1,3 +1,5 @@
+#![cfg_attr(not(generate_tones), allow(dead_code))]
+
 // Code from basic_waves package!
 
 use std::f32::consts::PI;
