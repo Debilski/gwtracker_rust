@@ -1,3 +1,5 @@
+#![cfg_attr(not(generate_tones), allow(dead_code))]
+
 use std::f32::consts::PI;
 use std::time::Duration;
 

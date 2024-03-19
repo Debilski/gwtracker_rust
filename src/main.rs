@@ -1,6 +1,8 @@
 mod datafetch;
 mod log_source;
+mod sine_beat;
 mod take_with_fade;
+mod triangle_wave;
 
 use std::fmt::Debug;
 use std::fs::{self, File};
@@ -133,6 +135,9 @@ struct Args {
     offline: bool,
 
     #[arg(long, default_value_t = false)]
+    generate_tones: bool,
+
+    #[arg(long, default_value_t = false)]
     log_sample_aplitudes: bool,
 
     #[arg(long, default_value_t = 1.0)]
@@ -235,6 +240,7 @@ where
     }
 }
 
+
 fn main() {
     let args = Args::parse();
 
@@ -255,22 +261,53 @@ fn main() {
             println!("{}", ev);
         }
     }
-    
 
-    let source_m1 = source("sounds/M-1ab_130.mp3").buffered().repeat_infinite();
-    let source_m2 = source("sounds/M-2ab_140.mp3").buffered().repeat_infinite();
-    let source_m3 = source("sounds/M-3ab_150.mp3").buffered().repeat_infinite();
-    let source_m35 = source("sounds/M35-perma.mp3").buffered().repeat_infinite();
-    let source_m75 = source("sounds/M75-perma.mp3").buffered().repeat_infinite();
+    /*
+       M1_130 -> 140Hz, 4,98s
+       M2_140 -> 130Hz, 9,96s
+       M3_150 -> 150Hz, 10s (allerdings geht Original nie auf 0)
 
-    let tria_44_00 = source("sounds/Triangle_44,00-50-loop.mp3").buffered().repeat_infinite();
-    let tria_44_22 = source("sounds/Triangle_44,22-ca70-loop.mp3").buffered().repeat_infinite();
-    let tria_44_23 = source("sounds/Triangle_44,23-100-loop.mp3").buffered().repeat_infinite();
-    let tria_44_25 = source("sounds/Triangle_44,25-ca85-loop.mp3").buffered().repeat_infinite();
-    let tria_200 = source("sounds/Triangle_200-ca70 10sec oh.mp3").buffered();
-    let tria_201 = source("sounds/Triangle_201_ca30 10sec oh.mp3").buffered();
-    let tria_202 = source("sounds/Triangle_202_ca20 2 sec oh.mp3").buffered();
-    let tria_203 = source("sounds/Triangle_203_ca70 2 sec oh.mp3").buffered();
+       M35 -> 35Hz, 2,5s
+       M75 -> 75Hz, 2,5s
+
+    */
+
+    cfg_if::cfg_if! {
+        if #[cfg(generate_tones)] {
+            let source_m1 = sine_beat::SineBeat::new(140.0, 4.98);
+            let source_m2 = sine_beat::SineBeat::new(130.0, 9.96);
+            let source_m3 = sine_beat::SineBeat::new(150.0, 10);
+
+            let source_m35 = sine_beat::SineBeat::new(35.0, 2.55);
+            let source_m75 = sine_beat::SineBeat::new(75.0, 2.5);
+
+            let tria_44_00 = triangle_wave::TriangleWave::new(44.0).repeat_infinite();
+            let tria_44_22 = triangle_wave::TriangleWave::new(44.22).repeat_infinite();
+            //let tria_44_23 = triangle_wave::TriangleWave::new(44.23).repeat_infinite();
+            //let tria_44_25 = triangle_wave::TriangleWave::new(44.25).repeat_infinite();
+            let tria_200 = source("sounds/Triangle_200-ca70 10sec oh.mp3").buffered();
+            let tria_201 = source("sounds/Triangle_201_ca30 10sec oh.mp3").buffered();
+
+            let tria_200 = triangle_wave::TriangleWave::new(200.0)
+                .take_duration_with_fade(Duration::from_secs(10), Duration::from_millis(500));
+            let tria_201 = triangle_wave::TriangleWave::new(201.0)
+                .take_duration_with_fade(Duration::from_secs(10), Duration::from_millis(500));
+        } else {
+            let source_m1 = source("sounds/M-1ab_130.mp3").buffered().repeat_infinite();
+            let source_m2 = source("sounds/M-2ab_140.mp3").buffered().repeat_infinite();
+            let source_m3 = source("sounds/M-3ab_150.mp3").buffered().repeat_infinite();
+
+            let source_m35 = source("sounds/M35-perma.mp3").buffered().repeat_infinite();
+            let source_m75 = source("sounds/M75-perma.mp3").buffered().repeat_infinite();
+
+            let tria_44_00 = source("sounds/Triangle_44,00-50-loop.mp3").buffered().repeat_infinite();
+            let tria_44_22 = source("sounds/Triangle_44,22-ca70-loop.mp3").buffered().repeat_infinite();
+            //let tria_44_23 = source("sounds/Triangle_44,23-100-loop.mp3").buffered().repeat_infinite();
+            //let tria_44_25 = source("sounds/Triangle_44,25-ca85-loop.mp3").buffered().repeat_infinite();
+            let tria_200 = source("sounds/Triangle_200-ca70 10sec oh.mp3").buffered();
+            let tria_201 = source("sounds/Triangle_201_ca30 10sec oh.mp3").buffered();
+        }
+    }
 
     let (controller, mixer) = dynamic_mixer::mixer::<f32>(2, 44_100);
     let (_stream, stream_handle) = OutputStream::try_default().unwrap();
@@ -417,7 +454,7 @@ fn main() {
         move |secs: u64| play_repeat("M2", &source_m2, &tx_m2, secs, 100, args.vol_m2, &np)
     };
 
-    let play_m3 = {
+    let _play_m3 = {
         let np = now_playing.clone();
         move |secs: u64| play_repeat("M3", &source_m3, &tx_m3, secs, 100, args.vol_m3, &np)
     };

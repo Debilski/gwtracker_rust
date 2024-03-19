@@ -21,3 +21,4 @@ jobs:
           packages: libasound2-dev
           version: 1.0
       - run: cargo test --workspace --no-fail-fast
+      - run: cargo test --workspace --no-fail-fast --features generate_tones
