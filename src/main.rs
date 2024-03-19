@@ -7,7 +7,6 @@ mod triangle_wave;
 use std::fmt::Debug;
 use std::fs::{self, File};
 use std::io::{BufReader, BufWriter};
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -20,20 +19,22 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use rand::Rng;
 use rodio::queue::{queue, SourcesQueueInput};
 use rodio::source::Source;
-use rodio::{dynamic_mixer, Decoder, OutputStream, Sample, Sink};
+use rodio::{dynamic_mixer, OutputStream, Sample, Sink};
 
 use crate::datafetch::read_gracedb;
 use crate::take_with_fade::TakeWithFade;
 
-type SourceOnce = Decoder<BufReader<File>>;
+#[cfg(not(feature = "generate_tones"))]
+type SourceOnce = rodio::Decoder<BufReader<File>>;
 
 const GIT_VERSION: &str = git_version::git_version!();
 
+#[cfg(not(feature = "generate_tones"))]
 fn source(str: &str) -> SourceOnce {
     // We either check relative to the current folder and if nothing is found,
     // we search relative to the exe path
 
-    let rel_to_cwd_path = PathBuf::from(str);
+    let rel_to_cwd_path = std::path::PathBuf::from(str);
 
     let path = if rel_to_cwd_path.exists() {
         rel_to_cwd_path
@@ -51,12 +52,12 @@ fn source(str: &str) -> SourceOnce {
     println!("Opening {:?}", path);
     let file = File::open(path.clone()).unwrap();
 
-    let data = Decoder::new(BufReader::new(file)).unwrap().convert_samples().buffered();
+    let data = rodio::Decoder::new(BufReader::new(file)).unwrap().convert_samples().buffered();
     let max: Option<f32> = data.clone().max_by(|x: &f32, y: &f32| x.total_cmp(y));
     println!("Max amplitude: {:?}", max.unwrap());
 
     let file = File::open(path.clone()).unwrap();
-    let data = Decoder::new(BufReader::new(file)).unwrap();
+    let data = rodio::Decoder::new(BufReader::new(file)).unwrap();
     data
 }
 
@@ -273,10 +274,10 @@ fn main() {
     */
 
     cfg_if::cfg_if! {
-        if #[cfg(generate_tones)] {
+        if #[cfg(feature = "generate_tones")] {
             let source_m1 = sine_beat::SineBeat::new(140.0, 4.98);
             let source_m2 = sine_beat::SineBeat::new(130.0, 9.96);
-            let source_m3 = sine_beat::SineBeat::new(150.0, 10);
+            let source_m3 = sine_beat::SineBeat::new(150.0, 10.);
 
             let source_m35 = sine_beat::SineBeat::new(35.0, 2.55);
             let source_m75 = sine_beat::SineBeat::new(75.0, 2.5);
@@ -285,9 +286,6 @@ fn main() {
             let tria_44_22 = triangle_wave::TriangleWave::new(44.22).repeat_infinite();
             //let tria_44_23 = triangle_wave::TriangleWave::new(44.23).repeat_infinite();
             //let tria_44_25 = triangle_wave::TriangleWave::new(44.25).repeat_infinite();
-            let tria_200 = source("sounds/Triangle_200-ca70 10sec oh.mp3").buffered();
-            let tria_201 = source("sounds/Triangle_201_ca30 10sec oh.mp3").buffered();
-
             let tria_200 = triangle_wave::TriangleWave::new(200.0)
                 .take_duration_with_fade(Duration::from_secs(10), Duration::from_millis(500));
             let tria_201 = triangle_wave::TriangleWave::new(201.0)

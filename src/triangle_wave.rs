@@ -1,4 +1,4 @@
-#![cfg_attr(not(generate_tones), allow(dead_code))]
+#![cfg_attr(not(feature = "generate_tones"), allow(dead_code))]
 
 // Code from basic_waves package!
 
