@@ -29,6 +29,8 @@ type SourceOnceBuffered = rodio::source::Buffered<SourceOnce>;
 type SourceInfinite = rodio::source::Repeat<SourceOnce>;
 type SourceInfiniteBuffered = rodio::source::Repeat<SourceOnceBuffered>;
 
+const GIT_VERSION: &str = git_version::git_version!();
+
 fn source(str: &str) -> SourceOnce {
     // We either check relative to the current folder and if nothing is found,
     // we search relative to the exe path
@@ -146,6 +148,9 @@ fn download_tsv(url: &str) -> Result<(&str, usize), Box<dyn std::error::Error>> 
 #[command(version, about, long_about = None)]
 struct Args {
     #[arg(long, default_value_t = false)]
+    offline: bool,
+
+    #[arg(long, default_value_t = false)]
     log_sample_aplitudes: bool,
 
     #[arg(long, default_value_t = 1.0)]
@@ -251,13 +256,17 @@ where
 fn main() {
     let args = Args::parse();
 
-    println!("==== {} ====", "GWrust".blue());
+    println!("==== {} ({}) ====", "GWrust".blue(), GIT_VERSION.white());
 
     let ten_minutes = Duration::from_secs(600);
 
-    let gw_events = read_or_renew_cache(EVENTS_CACHE, ten_minutes, || {
-        read_gracedb(3)
-    });
+    let gw_events = if args.offline {
+        read_cache(EVENTS_CACHE)
+    } else {
+        read_or_renew_cache(EVENTS_CACHE, ten_minutes, || {
+            read_gracedb(3)
+        })
+    };
 
     println!("{gw_events:?}");
 
