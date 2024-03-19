@@ -9,14 +9,14 @@ use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, USER_AGENT};
 use serde::{Deserialize, Serialize};
 
-
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
 pub struct GraceDbList {
     #[serde(rename = "numRows")]
     num_rows: u64,
     superevents: Vec<GraceDbListEvent>,
 }
-
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Clone)]
 pub struct GraceDbListEvent {
     superevent_id: String,
@@ -108,8 +108,10 @@ pub struct GWEvent {
     #[serde(with = "gracedb_date")]
     time: DateTime<Utc>,
 
+    far: f64,
     location_area: u64,
     distance: u64,
+    distance_std: u64,
     detectors: Vec<String>,
     ns_ns: f64,
     ns_bh: f64,
@@ -120,18 +122,19 @@ pub struct GWEvent {
 
 impl std::fmt::Display for GWEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "Event: id={:<10} {:<8} time={} area={} dist={} ns_ns={:.3} ns_bh={:.3} bh_bh={:.3} terr={:.3} mass_gap={:.3}",
+        write!(f, "Event: id={:<10} {:<8} time={} FAR={:<7.1e} area={} dist={:<4}±{:<4} ns_ns={:.3} ns_bh={:.3} bh_bh={:.3} terr={:.3} mass_gap={:.3}",
             self.id,
             self.detectors.join(","),
             self.time,
+            self.far,
             self.location_area,
             self.distance,
+            self.distance_std,
             self.ns_ns,
             self.ns_bh,
             self.bh_bh,
             self.terrestrial,
             self.mass_gap
-    
         )
     }
 }
@@ -142,8 +145,10 @@ fn gracedb_to_gwevent(gracedb_event: GraceDbEvent, fits_data: Option<FitsParams>
     GWEvent {
         id: gracedb_event.superevent_id.clone(),
         time: gracedb_event.event.time,
+        far: gracedb_event.event.far,
         location_area: 0, // TODO
-        distance: fits_data.map_or(0, |d| d.dist_mean as u64),
+        distance: fits_data.as_ref().map_or(0, |d| d.dist_mean as u64),
+        distance_std: fits_data.as_ref().map_or(0, |d| d.dist_std as u64),
         detectors: gracedb_event.event.instruments.clone(),
         ns_ns: gracedb_event.event.classification.bns,
         ns_bh: gracedb_event.event.classification.ns_bh,
@@ -201,7 +206,7 @@ fn download_fits(
     Ok(file_path)
 }
 
-
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 struct FitsParams {
     dist_mean: f64,
@@ -245,7 +250,6 @@ fn read_fits(filename: &Path) -> Result<FitsParams, Box<dyn std::error::Error>> 
 
 // blocking IO
 pub fn read_gracedb(last_n: usize) -> Result<Vec<GWEvent>, Box<dyn std::error::Error>> {
-
     let client = Client::new();
     let mut result: Vec<GWEvent> = Vec::new();
 
@@ -286,24 +290,27 @@ pub fn read_gracedb(last_n: usize) -> Result<Vec<GWEvent>, Box<dyn std::error::E
 
             if let Some(url) = files_map.get(&update_json) {
                 let eventdata = read_gracedbevent(url, &client)?;
-                
+
                 let mut fits_data = None;
                 if let Some(url) = files_map.get("bayestar.multiorder.fits") {
-                    let gen_name = format!("{}-{}", event.superevent_id, "bayestar.multiorder.fits");
+                    let gen_name =
+                        format!("{}-{}", event.superevent_id, "bayestar.multiorder.fits");
                     let file_path = download_fits(&gen_name, url, &client)?;
 
                     fits_data = read_fits(&file_path).ok();
+                    println!("Fits data: {:?}", fits_data);
                 } else {
                     println!("No fits file bayestar.multiorder.fits found. Skipping.")
                 }
-                
+
                 let gwevent = gracedb_to_gwevent(eventdata, fits_data);
                 result.push(gwevent);
-
             } else {
-                println!("Warning: No file {} found for event {}", update_json, event.superevent_id);
+                println!(
+                    "Warning: No file {} found for event {}",
+                    update_json, event.superevent_id
+                );
             }
-
         }
     }
 

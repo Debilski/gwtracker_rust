@@ -1,8 +1,9 @@
 // Code from basic_waves package!
 
-use rodio::source::Source;
 use std::f32::consts::PI;
 use std::time::Duration;
+
+use rodio::source::Source;
 
 /// An infinite source that produces a triangle wave.
 /// Has a definable sample rate and one channel.
@@ -17,10 +18,7 @@ impl TriangleWave {
     /// The frequency and sample rate of the triangle wave.
     #[inline]
     pub fn new(freq: f32) -> TriangleWave {
-        TriangleWave {
-            freq,
-            ..Default::default()
-        }
+        TriangleWave { freq, ..Default::default() }
     }
 }
 
@@ -29,11 +27,7 @@ impl Default for TriangleWave {
     /// with a sample rate of 48000.
     #[inline]
     fn default() -> Self {
-        Self {
-            freq: 440.0,
-            number_of_samples: 0,
-            sample_rate: 48000,
-        }
+        Self { freq: 440.0, number_of_samples: 0, sample_rate: 48000 }
     }
 }
 
