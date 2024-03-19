@@ -256,8 +256,10 @@ fn main() {
     let ten_minutes = Duration::from_secs(600);
 
     let gw_events = read_or_renew_cache(EVENTS_CACHE, ten_minutes, || {
-        read_gracedb(3).map(|evts| evts.iter().map(datafetch::gracedb_to_gwevent).collect())
+        read_gracedb(3)
     });
+
+    println!("{gw_events:?}");
 
     if let Ok(evs) = gw_events {
         for ev in evs.iter() {
