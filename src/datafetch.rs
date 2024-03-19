@@ -1,21 +1,19 @@
 use std::collections::HashMap;
-use std::error::Error;
-use std::fs::{self, File};
-use std::io::{self, Read};
-use std::path::{Display, Path, PathBuf};
+use std::fs;
+use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, NaiveDate, Utc};
-use csv::ReaderBuilder;
-use fitrs::{Fits, FitsData};
+use chrono::{DateTime, Utc};
+use fitrs::Fits;
 use fitrs::HeaderValue::{CharacterString, RealFloatingNumber};
 use reqwest::blocking::Client;
-use reqwest::header::{ACCEPT, CONTENT_TYPE, USER_AGENT};
-use serde::{Deserialize, Deserializer, Serialize};
+use reqwest::header::{ACCEPT, USER_AGENT};
+use serde::{Deserialize, Serialize};
 
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct GraceDbList {
-    numRows: u64,
+    #[serde(rename = "numRows")]
+    num_rows: u64,
     superevents: Vec<GraceDbListEvent>,
 }
 
@@ -140,7 +138,7 @@ impl std::fmt::Display for GWEvent {
 
 pub type GWEventVec = Vec<GWEvent>;
 
-pub fn gracedb_to_gwevent(gracedb_event: GraceDbEvent, fits_data: Option<FitsParams>) -> GWEvent {
+fn gracedb_to_gwevent(gracedb_event: GraceDbEvent, fits_data: Option<FitsParams>) -> GWEvent {
     GWEvent {
         id: gracedb_event.superevent_id.clone(),
         time: gracedb_event.event.time,
