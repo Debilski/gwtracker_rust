@@ -50,7 +50,9 @@ jobs:
 
     - name: Run Cargo
       if: ${{ !matrix.cross }}
-      run: cargo build --release --target ${{ matrix.target }}
+      run: |
+        cargo build --release --target ${{ matrix.target }}
+        cargo build --release --target ${{ matrix.target }} --bin gwrust-generate_tones --features="generate_tones"
 
     - name: create artifact directory
       shell: bash
@@ -59,6 +61,7 @@ jobs:
         mkdir $directory
         #        cp README.md LICENSE NOTICE $directory
         cp target/${{ matrix.target }}/release/gwrust $directory
+        cp target/${{ matrix.target }}/release/gwrust-generate_tones $directory
         tar cJf $directory.tar.xz $directory
 
     - uses: ncipollo/release-action@v1.14.0

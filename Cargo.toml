@@ -7,6 +7,17 @@ edition = "2021"
 default = []
 generate_tones = []
 
+
+[[bin]]
+name = "gwrust"
+path = "src/main.rs"
+required-features = []
+
+[[bin]]
+name = "gwrust-generate_tones"
+path = "src/main.rs"
+required-features = ["generate_tones"]
+
 [dependencies]
 cfg-if = "1.0.0"
 chrono = "0.4.31"
