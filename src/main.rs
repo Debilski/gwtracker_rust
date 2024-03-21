@@ -223,24 +223,19 @@ fn read_or_renew_cache<F>(
 where
     F: FnOnce() -> Result<datafetch::GWEventVec, Box<dyn std::error::Error>>,
 {
-    let cached_val = read_cache(path);
+    let maybe_cached_value = read_cache(path);
 
-    match is_cache_valid(path, duration) {
-        Ok(true) => {
-            let res = cached_val.or_else(|err| {
-                println!("Warning: Could not get result from cache: {err}. Trying to fetch again");
-                renew_cache(path, f)
-            });
-            res
-        }
-        _ => {
-            // TODO: If f fails, see that we still get the cached version!
+    let valid = is_cache_valid(path, duration).is_ok_and(|x| x == true);
 
-            renew_cache(path, f)
-        }
+    match (maybe_cached_value, valid) {
+        (Ok(cached), true) => Ok(cached),
+        (Ok(cached), false) => renew_cache(path, f).or_else(|e| {
+            println!("Error updating cache: {:?}. Falling back to old version.", e);
+            Ok(cached)
+        }),
+        _ => renew_cache(path, f),
     }
 }
-
 
 fn main() {
     let args = Args::parse();
@@ -261,6 +256,9 @@ fn main() {
         for ev in evs.iter() {
             println!("{}", ev);
         }
+    } else {
+        println!("Could not fetch events. Error {:?}.", gw_events);
+        return;
     }
 
     /*
