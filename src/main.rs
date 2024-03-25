@@ -197,21 +197,21 @@ fn read_cache(path: &str) -> Result<datafetch::GWEventVec, Box<dyn std::error::E
 }
 
 fn write_to_cache(
+    data: &datafetch::GWEventVec,
     path: &str,
-    event: &datafetch::GWEventVec,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let file = File::create(path)?;
     let writer = BufWriter::new(file);
-    serde_json::to_writer(writer, event)?;
+    serde_json::to_writer(writer, data)?;
     Ok(())
 }
 
-fn renew_cache<F>(path: &str, f: F) -> Result<datafetch::GWEventVec, Box<dyn std::error::Error>>
+fn fetch_fn_to_cache<F>(f: F, path: &str) -> Result<datafetch::GWEventVec, Box<dyn std::error::Error>>
 where
     F: FnOnce() -> Result<datafetch::GWEventVec, Box<dyn std::error::Error>>,
 {
     let data = f()?;
-    write_to_cache(path, &data)?;
+    write_to_cache( &data, path)?;
     Ok(data)
 }
 
@@ -228,34 +228,40 @@ where
     let valid = is_cache_valid(path, duration).is_ok_and(|x| x == true);
 
     match (maybe_cached_value, valid) {
-        (Ok(cached), true) => Ok(cached),
-        (Ok(cached), false) => renew_cache(path, f).or_else(|e| {
+        (Ok(cached), true) => {
+            println!("Loading event data from cache file {path}.");
+            Ok(cached)
+        }
+        (Ok(cached), false) => fetch_fn_to_cache(f, path).or_else(|e| {
             println!("Error updating cache: {:?}. Falling back to old version.", e);
             Ok(cached)
         }),
-        _ => renew_cache(path, f),
+        _ => fetch_fn_to_cache(f, path),
     }
 }
 
 fn main() {
     let args = Args::parse();
 
+    println!();
     println!("==== {} ({}) ====", "GWrust".blue(), GIT_VERSION.white());
+    println!();
 
     let ten_minutes = Duration::from_secs(600);
+    let last_n = 3;
 
     let gw_events = if args.offline {
         read_cache(EVENTS_CACHE)
     } else {
-        read_or_renew_cache(EVENTS_CACHE, ten_minutes, || read_gracedb(3))
+        read_or_renew_cache(EVENTS_CACHE, ten_minutes, || read_gracedb(last_n))
     };
 
-    println!("{gw_events:?}");
-
     if let Ok(evs) = gw_events {
+        println!("Last {last_n} confirmed superevents:");
         for ev in evs.iter() {
             println!("{}", ev);
         }
+        println!();
     } else {
         println!("Could not fetch events. Error {:?}.", gw_events);
         return;
