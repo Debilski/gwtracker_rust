@@ -273,20 +273,22 @@ fn main() {
 
     cfg_if::cfg_if! {
         if #[cfg(feature = "generate_tones")] {
-            let source_m1 = sine_beat::SineBeat::new(140.0, 4.98);
-            let source_m2 = sine_beat::SineBeat::new(130.0, 9.96);
-            let source_m3 = sine_beat::SineBeat::new(150.0, 10.);
+            // Amplitudes adjusted to roughly match the sound samples
 
-            let source_m35 = sine_beat::SineBeat::new(35.0, 2.55);
-            let source_m75 = sine_beat::SineBeat::new(75.0, 2.5);
+            let source_m1 = sine_beat::SineBeat::new(140.0, 4.98).amplify(0.07);
+            let source_m2 = sine_beat::SineBeat::new(130.0, 9.96).amplify(0.08);
+            let source_m3 = sine_beat::SineBeat::new(150.0, 10.).amplify(0.06);
 
-            let tria_44_00 = triangle_wave::TriangleWave::new(44.0).repeat_infinite();
-            let tria_44_22 = triangle_wave::TriangleWave::new(44.22).repeat_infinite();
+            let source_m35 = sine_beat::SineBeat::new(35.0, 2.55).amplify(0.28);
+            let source_m75 = sine_beat::SineBeat::new(75.0, 2.5).amplify(0.29);
+
+            let tria_44_00 = triangle_wave::TriangleWave::new(44.0).amplify(0.38).repeat_infinite();
+            let tria_44_22 = triangle_wave::TriangleWave::new(44.22).amplify(0.59).repeat_infinite();
             //let tria_44_23 = triangle_wave::TriangleWave::new(44.23).repeat_infinite();
             //let tria_44_25 = triangle_wave::TriangleWave::new(44.25).repeat_infinite();
-            let tria_200 = triangle_wave::TriangleWave::new(200.0)
+            let tria_200 = triangle_wave::TriangleWave::new(200.0).amplify(0.53)
                 .take_duration_with_fade(Duration::from_secs(10), Duration::from_millis(500));
-            let tria_201 = triangle_wave::TriangleWave::new(201.0)
+            let tria_201 = triangle_wave::TriangleWave::new(201.0).amplify(0.26)
                 .take_duration_with_fade(Duration::from_secs(10), Duration::from_millis(500));
         } else {
             let source_m1 = source("sounds/M-1ab_130.mp3").buffered().repeat_infinite();
